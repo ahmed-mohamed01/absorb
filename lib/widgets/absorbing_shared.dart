@@ -218,7 +218,8 @@ class DownloadWideButton extends StatefulWidget {
   final String title;
   final String? author;
   final Color accent;
-  const DownloadWideButton({super.key, required this.itemId, this.coverUrl, required this.title, this.author, required this.accent});
+  final bool compact;
+  const DownloadWideButton({super.key, required this.itemId, this.coverUrl, required this.title, this.author, required this.accent, this.compact = false});
   @override State<DownloadWideButton> createState() => _DownloadWideButtonState();
 }
 
@@ -254,10 +255,12 @@ class _DownloadWideButtonState extends State<DownloadWideButton> {
       color = Theme.of(context).colorScheme.onSurfaceVariant;
     }
 
-    return GestureDetector(
+    return Tooltip(
+      message: widget.compact ? label : '',
+      child: GestureDetector(
       onTap: () => _handleTap(context),
       child: Container(
-        height: 36,
+        height: widget.compact ? 44 : 36,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: downloaded ? dlGreen.withValues(alpha: 0.06) : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
@@ -278,14 +281,16 @@ class _DownloadWideButtonState extends State<DownloadWideButton> {
           Center(child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 16, color: color),
-              const SizedBox(width: 8),
-              Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
+              Icon(icon, size: widget.compact ? 20 : 16, color: color),
+              if (!widget.compact) ...[
+                const SizedBox(width: 8),
+                Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
+              ],
             ],
           )),
         ]),
       ),
-    );
+    ));
   }
 
   void _handleTap(BuildContext context) async {

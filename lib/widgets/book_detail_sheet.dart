@@ -222,6 +222,8 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
   bool _ebookSaved = false;
   bool _ebookOfflineDownloading = false;
   bool _authorsExpanded = false;
+  bool _tagsExpanded = false;
+  static const _tagChipLimit = 5;
   bool _narratorsExpanded = false;
   bool _squareCovers = false;
   bool _isUpdatingProgressDate = false;
@@ -340,6 +342,59 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
           ((_item?['media'] as Map?)?['narration'] as Map?)?['local'] == true) &&
       !NarrationService.instance.hasLocalAudio(widget.itemId);
 
+  Widget _secondaryIconButton(Color accent, IconData icon, VoidCallback? onTap, {double progress = 0, String? tooltip}) {
+    final showFill = progress > 0 && progress < 1;
+    final enabled = onTap != null;
+    return Tooltip(
+      message: tooltip ?? '',
+      child: SizedBox(
+      width: 56,
+      height: 52,
+      child: Material(
+        color: accent.withValues(alpha: enabled ? 0.14 : 0.06),
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Stack(alignment: Alignment.center, children: [
+            if (showFill)
+              Positioned(
+                left: 0, right: 0, bottom: 0,
+                child: FractionallySizedBox(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: progress.clamp(0.0, 1.0),
+                  child: Container(height: 3, color: accent),
+                ),
+              ),
+            Icon(icon, size: 24, color: enabled ? accent : accent.withValues(alpha: 0.4)),
+          ]),
+        ),
+      ),
+    ));
+  }
+
+  Widget _iconAction(ColorScheme cs, IconData icon, VoidCallback? onTap, {Color? color, bool busy = false, String? tooltip}) {
+    final fg = color ?? cs.onSurfaceVariant;
+    return Tooltip(
+      message: tooltip ?? '',
+      child: GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 44,
+        decoration: BoxDecoration(
+          color: (color ?? cs.onSurface).withValues(alpha: color == null ? 0.06 : 0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: (color ?? cs.onSurface).withValues(alpha: color == null ? 0.08 : 0.2)),
+        ),
+        child: Center(
+          child: busy
+              ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: fg))
+              : Icon(icon, size: 20, color: fg),
+        ),
+      ),
+    ));
+  }
+
   Widget _lookingButton(Color accent, Color onAccent, {double height = 52, double radius = 16}) => SizedBox(
         height: height,
         child: Material(
@@ -457,7 +512,18 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
 
   /// The cover shape set for the book's own library (or the one being
   /// browsed until the book has loaded), the same lookup the cards use.
+  double? get _itemFrame {
+    final f = (_item?['media'] as Map?)?['coverAspectRatio'];
+    return f is num ? f.toDouble() : null;
+  }
+
   void _loadCoverShape() {
+    final frame = _itemFrame;
+    if (frame != null) {
+      final square = frame >= 0.99;
+      if (mounted && _squareCovers != square) setState(() => _squareCovers = square);
+      return;
+    }
     final libraryId = _item?['libraryId'] as String? ??
         context.read<LibraryProvider>().selectedLibraryId;
     PlayerSettings.getRectangleCoversFor(libraryId).then((rect) {
@@ -659,7 +725,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     final media = _item?['media'] as Map<String, dynamic>?;
     final coverPath = media?['coverPath'] as String?;
     if (coverPath == null || coverPath.isEmpty) return null;
-    return context.read<LibraryProvider>().getCoverUrl(widget.itemId, width: 800);
+    return context.read<LibraryProvider>().getCoverUrl(widget.itemId, width: 800, coverRatio: _itemFrame);
   }
 
   /// Full-res cover for the viewer and sharing.
@@ -669,7 +735,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     final media = _item?['media'] as Map<String, dynamic>?;
     final coverPath = media?['coverPath'] as String?;
     if (coverPath == null || coverPath.isEmpty) return null;
-    return context.read<LibraryProvider>().getCoverUrl(widget.itemId, width: 4000);
+    return context.read<LibraryProvider>().getCoverUrl(widget.itemId, width: 4000, coverRatio: _itemFrame);
   }
 
 
@@ -765,6 +831,10 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     final providerBadges = auth.isBookOrbit ? _providerBadges() : const <Map<String, dynamic>>[];
 
     final isEbookOnly = PlayerSettings.isEbookOnly(_item!);
+    final textPrimary = isEbookOnly || media['narration'] != null;
+    final headerProgress = textPrimary && lib.getEbookProgress(widget.itemId) > progress
+        ? lib.getEbookProgress(widget.itemId)
+        : progress;
     // Preview only makes sense before the book has been started. The 60s
     // grace means an accidental tap-and-close doesn't hide it forever. Check
     // the override-aware progress fraction too - the server currentTime can
@@ -782,132 +852,10 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
           'duration=${duration.toStringAsFixed(0)}s)');
     }
 
-    return ListView(controller: widget.scrollController, padding: EdgeInsets.fromLTRB(20, 8, 20, 32 + MediaQuery.of(context).viewPadding.bottom), children: [
-      Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
-        decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.24), borderRadius: BorderRadius.circular(2)))),
-      if (_coverUrl != null) ...[
-        Center(child: GestureDetector(
-          onTap: () => _showFullCover(context, _fullResCoverUrl ?? _coverUrl!, lib.mediaHeaders, title),
-          child: Container(
-            height: 240,
-            width: _squareCovers ? 240 : null,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 16, offset: const Offset(0, 4))],
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: _squareCovers
-                ? (_coverUrl!.startsWith('/')
-                    ? BlurPaddedCover(
-                        blurChild: Image.file(File(_coverUrl!), fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const SizedBox.shrink()),
-                        child: Image.file(File(_coverUrl!), fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const SizedBox()),
-                      )
-                    : BlurPaddedCover(
-                        blurChild: CachedNetworkImage(
-                          imageUrl: _coverUrl!, fit: BoxFit.cover,
-                          httpHeaders: lib.mediaHeaders,
-                          errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                        ),
-                        child: CachedNetworkImage(
-                          imageUrl: _coverUrl!, fit: BoxFit.contain,
-                          httpHeaders: lib.mediaHeaders,
-                          placeholder: (_, __) => const SizedBox(),
-                          errorWidget: (_, __, ___) => const SizedBox(),
-                        ),
-                      ))
-                : CachedNetworkImage(
-                    imageUrl: _coverUrl!, fit: BoxFit.contain,
-                    httpHeaders: lib.mediaHeaders,
-                    placeholder: (_, __) => const SizedBox(),
-                    errorWidget: (_, __, ___) => const SizedBox(),
-                  ),
-          ),
-        )),
-        const SizedBox(height: 16),
-      ],
-      Text(title, textAlign: TextAlign.center, style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurface)),
-      if (subtitle.isNotEmpty) ...[
-        const SizedBox(height: 4),
-        Text(subtitle, textAlign: TextAlign.center,
-          style: tt.titleSmall?.copyWith(color: cs.onSurfaceVariant)),
-      ],
-      const SizedBox(height: 4),
-      _buildAuthorLinks(context, metadata, cs, tt, accent),
-      _buildNarratorLinks(context, metadata, cs, tt, accent),
-      // Series as a pill in the rating's style: a bounded target with its
-      // own edges, so it can't be mistaken for the narrator line above it.
-      if (seriesEntries.isNotEmpty) ...[
-        const SizedBox(height: 8),
-        Wrap(
-          alignment: WrapAlignment.center,
-          spacing: 8,
-          runSpacing: 6,
-          children: [
-            for (final s in seriesEntries)
-              GestureDetector(
-                onTap: () => _openSeries(context, s['id'] as String?, s['name'] as String? ?? ''),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: accent.withValues(alpha: 0.18)),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.auto_stories_rounded, size: 14, color: accent),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${s['name'] as String? ?? ''}'
-                      '${(s['sequence'] as String? ?? '').isNotEmpty ? ' #${s['sequence']}' : ''}',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(Icons.chevron_right_rounded, size: 16, color: accent.withValues(alpha: 0.6)),
-                  ]),
-                ),
-              ),
-          ],
-        ),
-      ],
-      // ─── AUDIBLE RATING (space always reserved) ─────────
-      const SizedBox(height: 8),
-      if (providerBadges.isNotEmpty)
-        _providerBadgeRow(cs, lib, providerBadges)
-      else if (_rating != null && (_rating!['rating'] as num).toDouble() > 0)
-        Center(
-          child: GestureDetector(
-            onTap: _asin != null ? () => _showAudibleReviews(context) : null,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: cs.onSurface.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: cs.onSurface.withValues(alpha: 0.08)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                ..._buildStars((_rating!['rating'] as num).toDouble(), accent),
-                const SizedBox(width: 6),
-                Text((_rating!['rating'] as num).toStringAsFixed(1),
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
-                if (((_rating!['count'] as num?) ?? 0) > 0) ...[
-                  const SizedBox(width: 3),
-                  Text('(${_formatRatingCount((_rating!['count'] as num).toInt(), l.localeName)})',
-                    style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
-                ],
-                const SizedBox(width: 4),
-                Text(l.onAudible, style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
-              ]),
-            ),
-          ),
-        )
-      else
-        const SizedBox(height: 20),
-      const SizedBox(height: 12),
-      if (_lookingForNarration)
-        _lookingButton(accent, _coverScheme?.onPrimary ?? cs.onPrimary)
-      else if (isEbookOnly && ebookFile != null && canReadEbook(ebookFile))
+    final Widget primaryButton = _lookingForNarration
+        ? _lookingButton(accent, _coverScheme?.onPrimary ?? cs.onPrimary)
+        : (textPrimary && ebookFile != null && canReadEbook(ebookFile))
+        ?
         // Reading progress fills the button the same way listening progress
         // fills Absorb.
         Builder(builder: (context) {
@@ -915,7 +863,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
           // A library refresh on BookOrbit carries an ebook-only book's
           // reading percent as its plain progress, with no ebook field.
           final saved = lib.getEbookProgress(widget.itemId);
-          final ebookProgress = saved > 0 ? saved : progress;
+          final ebookProgress = saved > 0 || !isEbookOnly ? saved : progress;
           final showFill = ebookProgress > 0 && ebookProgress < 1 && !isFinished;
           return SizedBox(
             height: 52,
@@ -935,8 +883,12 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Icon(Icons.menu_book_rounded, size: 24, color: onAccent),
                       const SizedBox(width: 8),
-                      Text(l.readEbook,
-                          style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: onAccent)),
+                      Flexible(
+                        child: Text(l.readEbook,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: onAccent)),
+                      ),
                     ]),
                   ),
                   if (showFill)
@@ -959,7 +911,8 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
             ),
           );
         })
-      else if (isEbookOnly && ebookFile != null)
+        : (isEbookOnly && ebookFile != null)
+        ?
         // Ebook-only but not readable in-app (CBR) - can't open it, so the
         // primary action exports the file to the device instead.
         SizedBox(height: 52, child: FilledButton.icon(
@@ -969,7 +922,8 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
             style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: cs.onPrimary)),
           style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
         ))
-      else if (isEbookOnly)
+        : isEbookOnly
+        ?
         SizedBox(height: 52, child: FilledButton.icon(
           onPressed: null,
           icon: const Icon(Icons.menu_book_rounded, size: 24),
@@ -977,7 +931,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
             style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
           style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
         ))
-      else
+        :
       SizedBox(
         height: 52,
         child: ListenableBuilder(
@@ -1071,7 +1025,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                                   ? AbsorbReplayIcon(size: 24, color: onAccent)
                                   : Icon(Icons.waves_rounded, size: 24, color: onAccent),
                       const SizedBox(width: 8),
-                      Text(
+                      Flexible(child: Text(
                         showAbsorbingState
                             ? Wording.of(context).absorbing
                             : fetching
@@ -1081,9 +1035,11 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                                     : isFinished
                                         ? Wording.of(context).absorbAgain
                                         : Wording.of(context).absorb,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: tt.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w600, color: onAccent),
-                      ),
+                      )),
                     ]),
                   ),
                   if (showFill)
@@ -1106,7 +1062,178 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
             );
           },
         ),
-      ),
+      );
+
+    void startListening() {
+      setState(() => _isAbsorbing = true);
+      _startAbsorb(context, auth: auth, title: title, author: authorName, coverUrl: _coverUrl, duration: duration, chapters: chapters);
+    }
+    final ebookProgressNow = lib.getEbookProgress(widget.itemId);
+    final Widget? secondaryButton = _lookingForNarration
+        ? null
+        : textPrimary
+            ? (media['narration'] != null && !isEbookOnly
+                ? _secondaryIconButton(accent, Icons.headphones_rounded,
+                    lib.isOffline && !DownloadService().isDownloaded(widget.itemId) ? null : startListening,
+                    progress: progress, tooltip: Wording.of(context).absorb)
+                : null)
+            : (ebookFile != null && canReadEbook(ebookFile)
+                ? _secondaryIconButton(accent, Icons.menu_book_rounded, () => _openEbookReader(context, auth, ebookFile, title),
+                    progress: ebookProgressNow, tooltip: l.readEbook)
+                : null);
+
+    return ListView(controller: widget.scrollController, padding: EdgeInsets.fromLTRB(20, 8, 20, 32 + MediaQuery.of(context).viewPadding.bottom), children: [
+      Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.24), borderRadius: BorderRadius.circular(2)))),
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (_coverUrl != null) ...[
+        GestureDetector(
+          onTap: () => _showFullCover(context, _fullResCoverUrl ?? _coverUrl!, lib.mediaHeaders, title),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 170),
+            height: 170,
+            width: _squareCovers ? 170 : null,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 16, offset: const Offset(0, 4))],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: _squareCovers
+                ? (_coverUrl!.startsWith('/')
+                    ? BlurPaddedCover(
+                        blurChild: Image.file(File(_coverUrl!), fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+                        child: Image.file(File(_coverUrl!), fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const SizedBox()),
+                      )
+                    : BlurPaddedCover(
+                        blurChild: CachedNetworkImage(
+                          imageUrl: _coverUrl!, fit: BoxFit.cover,
+                          httpHeaders: lib.mediaHeaders,
+                          errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                        ),
+                        child: CachedNetworkImage(
+                          imageUrl: _coverUrl!, fit: BoxFit.contain,
+                          httpHeaders: lib.mediaHeaders,
+                          placeholder: (_, __) => const SizedBox(),
+                          errorWidget: (_, __, ___) => const SizedBox(),
+                        ),
+                      ))
+                : CachedNetworkImage(
+                    imageUrl: _coverUrl!, fit: BoxFit.contain,
+                    httpHeaders: lib.mediaHeaders,
+                    placeholder: (_, __) => const SizedBox(),
+                    errorWidget: (_, __, ___) => const SizedBox(),
+                  ),
+          ),
+        ),
+        const SizedBox(width: 16),
+      ],
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: tt.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurface)),
+      if (subtitle.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis,
+          style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+      ],
+      const SizedBox(height: 2),
+      _buildAuthorLinks(context, metadata, cs, tt, accent),
+      _buildNarratorLinks(context, metadata, cs, tt, accent),
+      const SizedBox(height: 6),
+      Wrap(spacing: 8, runSpacing: 6, children: [
+        if (headerProgress > 0 && !isFinished)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(color: accent.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(8)),
+            child: Text('${(headerProgress * 100).round()}%',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent)),
+          ),
+        if (bookOrbitOnline)
+          _chip(
+            _readStatusIcon(readStatus),
+            _readStatusLabel(l, readStatus),
+            onTap: _savingStatus ? null : () => _pickReadStatus(auth, lib, readStatus),
+          ),
+      ]),
+      // Series as a pill in the rating's style: a bounded target with its
+      // own edges, so it can't be mistaken for the narrator line above it.
+      if (seriesEntries.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Wrap(
+          alignment: WrapAlignment.start,
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final s in seriesEntries)
+              GestureDetector(
+                onTap: () => _openSeries(context, s['id'] as String?, s['name'] as String? ?? ''),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: accent.withValues(alpha: 0.18)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.auto_stories_rounded, size: 14, color: accent),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        '${s['name'] as String? ?? ''}'
+                        '${(s['sequence'] as String? ?? '').isNotEmpty ? ' #${s['sequence']}' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded, size: 16, color: accent.withValues(alpha: 0.6)),
+                  ]),
+                ),
+              ),
+          ],
+        ),
+      ],
+      ])),
+      ]),
+      // ─── AUDIBLE RATING (space always reserved) ─────────
+      const SizedBox(height: 8),
+      if (providerBadges.isNotEmpty)
+        _providerBadgeRow(cs, lib, providerBadges)
+      else if (_rating != null && (_rating!['rating'] as num).toDouble() > 0)
+        Center(
+          child: GestureDetector(
+            onTap: _asin != null ? () => _showAudibleReviews(context) : null,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: cs.onSurface.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: cs.onSurface.withValues(alpha: 0.08)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                ..._buildStars((_rating!['rating'] as num).toDouble(), accent),
+                const SizedBox(width: 6),
+                Text((_rating!['rating'] as num).toStringAsFixed(1),
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+                if (((_rating!['count'] as num?) ?? 0) > 0) ...[
+                  const SizedBox(width: 3),
+                  Text('(${_formatRatingCount((_rating!['count'] as num).toInt(), l.localeName)})',
+                    style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+                ],
+                const SizedBox(width: 4),
+                Text(l.onAudible, style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+              ]),
+            ),
+          ),
+        )
+      else
+        const SizedBox(height: 20),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(child: primaryButton),
+        if (secondaryButton != null) ...[const SizedBox(width: 8), secondaryButton],
+      ]),
       ListenableBuilder(
         listenable: Listenable.merge([ReadListenSync.instance.syncing, ReadListenSync.instance.failed]),
         builder: (context, _) {
@@ -1162,57 +1289,6 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
           );
         },
       ),
-      // A companion ebook gets its own, smaller button under Absorb with the
-      // reading progress filled in the same way. Ebook-only books already
-      // have Read as the big button above.
-      if (!isEbookOnly && ebookFile != null && canReadEbook(ebookFile)) ...[
-        const SizedBox(height: 8),
-        Builder(builder: (context) {
-          final ebookProgress = lib.getEbookProgress(widget.itemId);
-          final showFill = ebookProgress > 0 && ebookProgress < 1;
-          return SizedBox(
-            height: 40,
-            child: Material(
-              color: accent.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(14),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: () => _openEbookReader(context, auth, ebookFile, title),
-                child: Stack(children: [
-                  if (showFill)
-                    FractionallySizedBox(
-                      widthFactor: ebookProgress.clamp(0.0, 1.0),
-                      child: Container(color: accent.withValues(alpha: 0.22)),
-                    ),
-                  Center(
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.menu_book_rounded, size: 18, color: accent),
-                      const SizedBox(width: 8),
-                      Text(l.readEbook,
-                          style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w600, color: accent)),
-                    ]),
-                  ),
-                  if (showFill)
-                    Positioned(
-                      right: 14,
-                      top: 0,
-                      bottom: 0,
-                      child: Center(
-                        child: Text(
-                          '${(ebookProgress * 100).toStringAsFixed(0)}%',
-                          style: tt.labelSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: accent.withValues(alpha: 0.85),
-                          ),
-                        ),
-                      ),
-                    ),
-                ]),
-              ),
-            ),
-          );
-        }),
-      ],
       // With the automatic sync off, an audiobook and its separate EPUB come
       // together by hand: whichever is behind moves up to the other.
       if (!_autoSync &&
@@ -1253,159 +1329,78 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
           },
         ),
       ],
-      // Primary action row: Download | Fully Absorb | ebook download (ebook-only)
       const SizedBox(height: 12),
       Row(children: [
-        if (!isEbookOnly) ...[
-          Expanded(child: DownloadWideButton(itemId: widget.itemId, coverUrl: _coverUrl, title: title, author: authorName, accent: accent)),
-          const SizedBox(width: 8),
-        ],
-        Expanded(child: GestureDetector(
-          onTap: () => isFinished
-              ? _markNotFinished(context, auth, currentTime, duration)
-              : _markFinished(context, auth, duration),
-          child: Container(
-            height: 36,
-            decoration: BoxDecoration(
-              color: isFinished ? Colors.green.withValues(alpha: 0.06) : cs.onSurface.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: isFinished ? Colors.green.withValues(alpha: 0.15) : cs.onSurface.withValues(alpha: 0.08)),
-            ),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(
-                isFinished ? Icons.check_circle_rounded : Icons.check_circle_outline_rounded,
-                size: 16,
-                color: isFinished ? Colors.green : cs.onSurfaceVariant,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                isFinished ? Wording.of(context).fullyAbsorbed : Wording.of(context).fullyAbsorbAction,
-                style: TextStyle(
-                  color: isFinished ? Colors.green : cs.onSurfaceVariant,
-                  fontSize: 12, fontWeight: FontWeight.w500,
-                ),
-              ),
-            ]),
-          ),
-        )),
-        if (isEbookOnly && !_lookingForNarration && ebookFile != null && canReadEbook(ebookFile)) ...[
-          const SizedBox(width: 8),
-          // For ebook-only books the big button above is already "Read", so this
-          // slot is the offline download (matching the audiobook download
-          // button's Saved/green styling). Audiobooks with a companion ebook
-          // have the Read button under Absorb instead, and the audio download
-          // already pulls the ebook along.
+        if (!isEbookOnly)
+          Expanded(child: DownloadWideButton(itemId: widget.itemId, coverUrl: _coverUrl, title: title, author: authorName, accent: accent, compact: true))
+        else if (!_lookingForNarration && ebookFile != null && canReadEbook(ebookFile))
           Expanded(child: ListenableBuilder(
-                  listenable: DownloadService(),
-                  builder: (_, __) {
-                    final saved = DownloadService().isDownloaded(widget.itemId);
-                    final dlGreen = Theme.of(context).brightness == Brightness.dark
-                        ? Colors.greenAccent : Colors.green.shade700;
-                    return GestureDetector(
-                      onTap: _ebookOfflineDownloading
-                          ? null
-                          : (saved
-                              ? () => _removeEbookOffline(context)
-                              : () => _downloadEbookOffline(context, auth, ebookFile, title)),
-                      child: Container(
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: saved ? dlGreen.withValues(alpha: 0.08) : cs.onSurface.withValues(alpha: 0.06),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: saved ? dlGreen.withValues(alpha: 0.2) : cs.onSurface.withValues(alpha: 0.08)),
-                        ),
-                        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                          if (_ebookOfflineDownloading)
-                            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: cs.onSurfaceVariant))
-                          else
-                            Icon(saved ? Icons.download_done_rounded : Icons.download_rounded,
-                                size: 16, color: saved ? dlGreen : cs.onSurfaceVariant),
-                          const SizedBox(width: 6),
-                          Text(saved ? l.saved : l.ebookDownload,
-                              style: TextStyle(color: saved ? dlGreen : cs.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w500)),
-                        ]),
-                      ),
-                    );
-                  },
-                )),
+            listenable: DownloadService(),
+            builder: (_, __) {
+              final saved = DownloadService().isDownloaded(widget.itemId);
+              final dlGreen = Theme.of(context).brightness == Brightness.dark ? Colors.greenAccent : Colors.green.shade700;
+              return _iconAction(cs, saved ? Icons.download_done_rounded : Icons.download_rounded,
+                  _ebookOfflineDownloading
+                      ? null
+                      : (saved ? () => _removeEbookOffline(context) : () => _downloadEbookOffline(context, auth, ebookFile, title)),
+                  color: saved ? dlGreen : null, busy: _ebookOfflineDownloading,
+                  tooltip: saved ? l.saved : l.ebookDownload);
+            },
+          )),
+        if (showPreview) ...[
+          const SizedBox(width: 8),
+          Expanded(child: _iconAction(cs,
+              (_preview?.isPlaying ?? false) ? Icons.stop_rounded : Icons.headphones_rounded,
+              () => _togglePreview(context, chapters, duration),
+              busy: _preview?.isLoading ?? false,
+              tooltip: (_preview?.isPlaying ?? false) ? l.chapterStopPreview : l.preview)),
         ],
+        const SizedBox(width: 8),
+        Expanded(child: _iconAction(cs,
+            isFinished ? Icons.check_circle_rounded : Icons.check_circle_outline_rounded,
+            () => isFinished ? _markNotFinished(context, auth, currentTime, duration) : _markFinished(context, auth, duration),
+            color: isFinished ? Colors.green : null,
+            tooltip: isFinished ? Wording.of(context).fullyAbsorbed : Wording.of(context).fullyAbsorbAction)),
+        const SizedBox(width: 8),
+        Expanded(child: _iconAction(cs, Icons.more_horiz_rounded,
+            () => _showMoreSheet(context, auth, lib, title, authorName, progress, isFinished, duration, ebookFile, isEbookOnly),
+            tooltip: l.moreActions)),
       ]),
-      if (showPreview) ...[
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: () => _togglePreview(context, chapters, duration),
-          child: Container(
-            height: 36,
-            decoration: BoxDecoration(
-              color: cs.onSurface.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: cs.onSurface.withValues(alpha: 0.08)),
-            ),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              if (_preview?.isLoading ?? false)
-                SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: cs.onSurfaceVariant))
-              else
-                Icon((_preview?.isPlaying ?? false) ? Icons.stop_rounded : Icons.headphones_rounded,
-                    size: 16, color: cs.onSurfaceVariant),
-              const SizedBox(width: 6),
-              Text((_preview?.isPlaying ?? false) ? l.chapterStopPreview : l.preview,
-                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w500)),
-            ]),
-          ),
-        ),
-      ],
-      // More button below primary row
-      const SizedBox(height: 8),
-      GestureDetector(
-        onTap: () => _showMoreSheet(context, auth, lib, title, authorName, progress, isFinished, duration, ebookFile, isEbookOnly,
-          ),
-        child: Container(
-          height: 36,
-          decoration: BoxDecoration(
-            color: cs.onSurface.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: cs.onSurface.withValues(alpha: 0.1)),
-          ),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.more_horiz_rounded, size: 16, color: cs.onSurfaceVariant),
-            const SizedBox(width: 6),
-            Text(l.moreActions, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12, fontWeight: FontWeight.w500)),
-          ]),
-        ),
-      ),
       if (!lib.isOffline && !isEbookOnly) ...[
         const SizedBox(height: 16),
         _listeningStatsBlock(context, cs, tt, accent, title),
       ],
       const SizedBox(height: 16),
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        if (bookOrbitOnline)
-          _chip(
-            _readStatusIcon(readStatus),
-            _readStatusLabel(l, readStatus),
-            onTap: _savingStatus ? null : () => _pickReadStatus(auth, lib, readStatus),
-          ),
+      Builder(builder: (context) {
+      final labels = <(String, bool)>[
+        for (final g in genres) (g, true),
+        for (final t in tags) (t, false),
+      ];
+      return Wrap(spacing: 8, runSpacing: 8, children: [
         if (year.isNotEmpty) _chip(Icons.calendar_today_rounded, year),
-        _chip(Icons.schedule_rounded, formatHm(duration)),
+        if (duration > 0) _chip(Icons.schedule_rounded, formatHm(duration)),
         if (chapters.isNotEmpty) _chip(Icons.list_rounded, l.chaptersChip(chapters.length)),
         ..._audioInfoChips(media),
         if (publisher.isNotEmpty) _chip(Icons.business_rounded, publisher),
-        ...genres.map((g) => _chip(
-              Icons.tag_rounded,
-              g,
-              onTap: () {
-                Navigator.of(context).pop();
-                AppShell.openLibraryWithGenreFilterGlobal(g);
-              },
-            )),
-        ...tags.map((t) => _chip(
-              Icons.local_offer_outlined,
-              t,
-              onTap: () {
-                Navigator.of(context).pop();
-                AppShell.openLibraryWithTagFilterGlobal(t);
-              },
-            )),
+        for (final entry in labels.take(_tagsExpanded ? labels.length : _tagChipLimit))
+          _chip(
+            entry.$2 ? Icons.tag_rounded : Icons.local_offer_outlined,
+            entry.$1,
+            onTap: () {
+              Navigator.of(context).pop();
+              if (entry.$2) {
+                AppShell.openLibraryWithGenreFilterGlobal(entry.$1);
+              } else {
+                AppShell.openLibraryWithTagFilterGlobal(entry.$1);
+              }
+            },
+          ),
+        if (labels.length > _tagChipLimit)
+          _chip(
+            _tagsExpanded ? Icons.expand_less_rounded : Icons.add_rounded,
+            _tagsExpanded ? l.showLess : '${labels.length - _tagChipLimit}',
+            onTap: () => setState(() => _tagsExpanded = !_tagsExpanded),
+          ),
         if (progressData?['startedAt'] is num)
           _chip(Icons.play_circle_outline_rounded, l.startedDate(_fmtDate((progressData!['startedAt'] as num).toInt())),
                 key: ValueKey('book-started-date-${widget.itemId}'),
@@ -1427,7 +1422,8 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                   editingFinishedDate: true,
                   startedAt: (progressData['startedAt'] as num).toInt(),
                   finishedAt: (progressData['finishedAt'] as num).toInt())),
-      ]),
+      ]);
+      }),
       if (descRaw.isNotEmpty) ...[const SizedBox(height: 16),
         Text(l.aboutSection, style: tt.titleSmall?.copyWith(color: cs.onSurfaceVariant, fontWeight: FontWeight.w600)),
         const SizedBox(height: 6),
@@ -3017,7 +3013,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     if (authors.isEmpty) {
       final name = metadata['authorName'] as String? ?? '';
       if (name.isEmpty) return const SizedBox.shrink();
-      return Text(name, textAlign: TextAlign.center, style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant));
+      return Text(name, style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant));
     }
 
     const int collapsedCount = 3;
@@ -3033,7 +3029,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     final commaStyle = tt.bodyMedium?.copyWith(color: accent);
 
     return Wrap(
-      alignment: WrapAlignment.center,
+      alignment: WrapAlignment.start,
       children: [
         for (int i = 0; i < visible.length; i++)
           _nameLink(
@@ -3105,7 +3101,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Wrap(
-        alignment: WrapAlignment.center,
+        alignment: WrapAlignment.start,
         children: [
           if (prefix.isNotEmpty)
             Padding(
