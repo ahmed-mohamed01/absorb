@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Refuse a commit that changes app files without a matching entry in FORK_NOTES.md.
+# Skip once with FORK_NOTES_SKIP=1 (for example while resolving a rebase conflict).
+[ "${FORK_NOTES_SKIP:-}" = "1" ] && exit 0
+
+staged=$(git diff --cached --name-only --diff-filter=ACMRD)
+changed=$(printf '%s\n' "$staged" \
+  | grep -E '^(lib/|android/|ios/|pubspec\.yaml$|\.githooks/)' \
+  | grep -vE '^lib/l10n/app_localizations')
+[ -z "$changed" ] && exit 0
+
+if ! printf '%s\n' "$staged" | grep -qx 'FORK_NOTES.md'; then
+  echo "FORK_NOTES.md is not part of this commit."
+  echo "Record what changed and why in FORK_NOTES.md, stage it, and commit again."
+  exit 1
+fi
+
+notes=$(git show :FORK_NOTES.md)
+missing=""
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  printf '%s' "$notes" | grep -qF -- "$f" || missing="$missing\n  $f"
+done <<< "$changed"
+
+if [ -n "$missing" ]; then
+  printf "These changed files are not mentioned in FORK_NOTES.md:%b\n" "$missing"
+  echo "Add a row for each (fork-owned file or hook in an upstream file), stage it, and commit again."
+  exit 1
+fi

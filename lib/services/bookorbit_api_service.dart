@@ -1281,16 +1281,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
       manifest: manifest,
       libraryId: libraryId ?? _bookLibrary[_key(id)],
     );
-    return _withFrame(item, card['coverAspectRatio']);
-  }
-
-  /// The book's own cover frame, so screens can draw each book in the shape
-  /// of its primary file.
-  static Map<String, dynamic> _withFrame(Map<String, dynamic> item, Object? frame) {
-    if (frame is String && item['media'] is Map) {
-      (item['media'] as Map)['coverAspectRatio'] = frame == '1/1' ? 1.0 : 2 / 3;
-    }
-    return item;
+    return _forkWithFrame(item, card['coverAspectRatio']);
   }
 
   Future<Map<String, dynamic>> _detail(String bookId, {bool fresh = false}) async {
@@ -1342,7 +1333,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   Future<Map<String, dynamic>> _item(String bookId, {bool withProgress = false}) async {
     final detail = await _detail(bookId, fresh: true);
     final manifest = _detailHasAudio(detail) ? await _manifest(bookId) : null;
-    final item = _withFrame(BookOrbitMapper.item(detail: detail, manifest: manifest), detail['coverAspectRatio']);
+    final item = _forkWithFrame(BookOrbitMapper.item(detail: detail, manifest: manifest), detail['coverAspectRatio']);
     if (withProgress) {
       final p = await _itemProgress(bookId, detail: detail, manifest: manifest);
       if (p != null) item['userMediaProgress'] = p;
@@ -2718,48 +2709,6 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
 
   String _dockFileId(String itemId) =>
       itemId.substring(BookOrbitMapper.dockItemPrefix.length);
-
-  Map<String, dynamic> _dashboardLibrary() => {
-        'id': dashboardLibraryId,
-        'name': 'Dashboard',
-        'displayOrder': -1,
-        'icon': 'database',
-        'mediaType': 'book',
-        'provider': 'audible',
-        'folders': const [],
-        'settings': {'coverAspectRatio': 0},
-      };
-
-  /// The dashboard is every library at once: its shelves come from
-  /// BookOrbit's own cross-library scrollers, and it has no books of its
-  /// own to browse.
-  Future<http.Response?> _routeDashboardLibrary(int n, String sub, Map<String, String> q) async {
-    if (n == 3) return _json(_dashboardLibrary());
-    final page = int.tryParse(q['page'] ?? '') ?? 0;
-    final limit = int.tryParse(q['limit'] ?? '') ?? 20;
-    switch (sub) {
-      case 'personalized':
-        return _json(await _cached('personalized:$dashboardLibraryId:${q['shelves'] ?? ''}:${q['limit'] ?? ''}',
-            const Duration(seconds: 20), () => _personalized(dashboardLibraryId, q)));
-      case 'items':
-      case 'series':
-      case 'collections':
-      case 'playlists':
-        return _json({'results': const [], 'total': 0, 'limit': limit, 'page': page});
-      case 'authors':
-        return _json(q.containsKey('page')
-            ? {'results': const [], 'total': 0, 'limit': limit, 'page': page}
-            : {'authors': const []});
-      case 'narrators':
-        return _json({'narrators': const []});
-      case 'filterdata':
-        return _json({
-          'authors': const [], 'series': const [], 'genres': const [], 'tags': const [],
-          'narrators': const [], 'languages': const [], 'publishers': const [], 'publishedDecades': const [],
-        });
-    }
-    return null;
-  }
 
   Future<Map<String, dynamic>?> _dockLibrary() async {
     if (!await _can('book_dock_access')) return null;

@@ -66,6 +66,7 @@ import 'stackable_sheet.dart';
 import 'ebook_router.dart';
 import '../utils/duration_format.dart';
 import '../utils/share_origin.dart';
+part 'fork/book_detail_fork.dart';
 
 // ─── BOOK DETAIL BOTTOM SHEET ───────────────────────────────
 
@@ -223,7 +224,6 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
   bool _ebookOfflineDownloading = false;
   bool _authorsExpanded = false;
   bool _tagsExpanded = false;
-  static const _tagChipLimit = 5;
   bool _narratorsExpanded = false;
   bool _squareCovers = false;
   bool _isUpdatingProgressDate = false;
@@ -342,59 +342,6 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
           ((_item?['media'] as Map?)?['narration'] as Map?)?['local'] == true) &&
       !NarrationService.instance.hasLocalAudio(widget.itemId);
 
-  Widget _secondaryIconButton(Color accent, IconData icon, VoidCallback? onTap, {double progress = 0, String? tooltip}) {
-    final showFill = progress > 0 && progress < 1;
-    final enabled = onTap != null;
-    return Tooltip(
-      message: tooltip ?? '',
-      child: SizedBox(
-      width: 56,
-      height: 52,
-      child: Material(
-        color: accent.withValues(alpha: enabled ? 0.14 : 0.06),
-        borderRadius: BorderRadius.circular(16),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Stack(alignment: Alignment.center, children: [
-            if (showFill)
-              Positioned(
-                left: 0, right: 0, bottom: 0,
-                child: FractionallySizedBox(
-                  alignment: Alignment.centerLeft,
-                  widthFactor: progress.clamp(0.0, 1.0),
-                  child: Container(height: 3, color: accent),
-                ),
-              ),
-            Icon(icon, size: 24, color: enabled ? accent : accent.withValues(alpha: 0.4)),
-          ]),
-        ),
-      ),
-    ));
-  }
-
-  Widget _iconAction(ColorScheme cs, IconData icon, VoidCallback? onTap, {Color? color, bool busy = false, String? tooltip}) {
-    final fg = color ?? cs.onSurfaceVariant;
-    return Tooltip(
-      message: tooltip ?? '',
-      child: GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 44,
-        decoration: BoxDecoration(
-          color: (color ?? cs.onSurface).withValues(alpha: color == null ? 0.06 : 0.08),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: (color ?? cs.onSurface).withValues(alpha: color == null ? 0.08 : 0.2)),
-        ),
-        child: Center(
-          child: busy
-              ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: fg))
-              : Icon(icon, size: 20, color: fg),
-        ),
-      ),
-    ));
-  }
-
   Widget _lookingButton(Color accent, Color onAccent, {double height = 52, double radius = 16}) => SizedBox(
         height: height,
         child: Material(
@@ -512,11 +459,6 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
 
   /// The cover shape set for the book's own library (or the one being
   /// browsed until the book has loaded), the same lookup the cards use.
-  double? get _itemFrame {
-    final f = (_item?['media'] as Map?)?['coverAspectRatio'];
-    return f is num ? f.toDouble() : null;
-  }
-
   void _loadCoverShape() {
     final frame = _itemFrame;
     if (frame != null) {
@@ -852,350 +794,24 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
           'duration=${duration.toStringAsFixed(0)}s)');
     }
 
-    final Widget primaryButton = _lookingForNarration
-        ? _lookingButton(accent, _coverScheme?.onPrimary ?? cs.onPrimary)
-        : (textPrimary && ebookFile != null && canReadEbook(ebookFile))
-        ?
-        // Reading progress fills the button the same way listening progress
-        // fills Absorb.
-        Builder(builder: (context) {
-          final onAccent = _coverScheme?.onPrimary ?? cs.onPrimary;
-          // A library refresh on BookOrbit carries an ebook-only book's
-          // reading percent as its plain progress, with no ebook field.
-          final saved = lib.getEbookProgress(widget.itemId);
-          final ebookProgress = saved > 0 || !isEbookOnly ? saved : progress;
-          final showFill = ebookProgress > 0 && ebookProgress < 1 && !isFinished;
-          return SizedBox(
-            height: 52,
-            child: Material(
-              color: accent,
-              borderRadius: BorderRadius.circular(16),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: () => _openEbookReader(context, auth, ebookFile, title),
-                child: Stack(children: [
-                  if (showFill)
-                    FractionallySizedBox(
-                      widthFactor: ebookProgress.clamp(0.0, 1.0),
-                      child: Container(color: onAccent.withValues(alpha: 0.22)),
-                    ),
-                  Center(
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.menu_book_rounded, size: 24, color: onAccent),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(l.readEbook,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: onAccent)),
-                      ),
-                    ]),
-                  ),
-                  if (showFill)
-                    Positioned(
-                      right: 14,
-                      top: 0,
-                      bottom: 0,
-                      child: Center(
-                        child: Text(
-                          '${(ebookProgress * 100).toStringAsFixed(0)}%',
-                          style: tt.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: onAccent.withValues(alpha: 0.85),
-                          ),
-                        ),
-                      ),
-                    ),
-                ]),
-              ),
-            ),
-          );
-        })
-        : (isEbookOnly && ebookFile != null)
-        ?
-        // Ebook-only but not readable in-app (CBR) - can't open it, so the
-        // primary action exports the file to the device instead.
-        SizedBox(height: 52, child: FilledButton.icon(
-          onPressed: () => _saveEbook(context, auth, ebookFile, title),
-          icon: Icon(_ebookSaved ? Icons.download_done_rounded : Icons.save_alt_rounded, size: 24),
-          label: Text(l.ebookSaveToDevice,
-            style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: cs.onPrimary)),
-          style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-        ))
-        : isEbookOnly
-        ?
-        SizedBox(height: 52, child: FilledButton.icon(
-          onPressed: null,
-          icon: const Icon(Icons.menu_book_rounded, size: 24),
-          label: Text(l.ebookOnlyNoAudio,
-            style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-          style: FilledButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-        ))
-        :
-      SizedBox(
-        height: 52,
-        child: ListenableBuilder(
-          listenable: Listenable.merge([AudioPlayerService(), DownloadService()]),
-          builder: (_, __) {
-            final player = AudioPlayerService();
-            final isCurrentPlaying =
-                player.currentItemId == widget.itemId && player.isPlaying;
-            final showAbsorbingState = _isAbsorbing || isCurrentPlaying;
-            final onAccent = _coverScheme?.onPrimary ?? cs.onPrimary;
-            final needsDownload = !showAbsorbingState && _needsNarrationDownload(auth);
-            final fetching = needsDownload && DownloadService().isDownloading(widget.itemId);
-            // How far into the book you are fills the button from the left,
-            // the way the download button fills while it fetches. A narration
-            // on its way down fills with the download instead.
-            final fill = fetching ? DownloadService().downloadProgress(widget.itemId) : progress;
-            final showFill = fetching || (!needsDownload && progress > 0 && !isFinished);
-            // Offline with nothing to play: only the ebook may be on the
-            // phone, and the Read button below still works.
-            if (lib.isOffline &&
-                !showAbsorbingState &&
-                !DownloadService().isDownloaded(widget.itemId)) {
-              return Material(
-                color: accent.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(16),
-                child: Center(
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.cloud_off_rounded, size: 22, color: onAccent),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        ebookFile != null && canReadEbook(ebookFile)
-                            ? l.absorbAudioNotDownloadedEbookOnly
-                            : l.absorbAudioNotDownloaded,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: tt.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600, color: onAccent),
-                      ),
-                    ),
-                  ]),
-                ),
-              );
-            }
-
-            return Material(
-              color: accent,
-              borderRadius: BorderRadius.circular(16),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: showAbsorbingState
-                    ? () async {
-                        if (isCurrentPlaying) {
-                          final lib = context.read<LibraryProvider>();
-                          await _activateQueueSource();
-                          unawaited(lib.syncQueueAutoDownloads());
-                        }
-                        if (!context.mounted) return;
-                        Navigator.of(context).popUntil((route) => route.isFirst);
-                        AppShell.goToAbsorbingGlobal();
-                      }
-                    : () {
-                        setState(() => _isAbsorbing = true);
-                        _startAbsorb(
-                          context,
-                          auth: auth,
-                          title: title,
-                          author: authorName,
-                          coverUrl: _coverUrl,
-                          duration: duration,
-                          chapters: chapters,
-                        );
-                      },
-                child: Stack(children: [
-                  if (showFill)
-                    FractionallySizedBox(
-                      widthFactor: fill.clamp(0.0, 1.0),
-                      child: Container(color: onAccent.withValues(alpha: 0.22)),
-                    ),
-                  Center(
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      showAbsorbingState
-                          ? SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: AbsorbingWave(color: onAccent),
-                            )
-                          : needsDownload
-                              ? Icon(Icons.download_rounded, size: 24, color: onAccent)
-                              : isFinished
-                                  ? AbsorbReplayIcon(size: 24, color: onAccent)
-                                  : Icon(Icons.waves_rounded, size: 24, color: onAccent),
-                      const SizedBox(width: 8),
-                      Flexible(child: Text(
-                        showAbsorbingState
-                            ? Wording.of(context).absorbing
-                            : fetching
-                                ? l.downloadsDownloading
-                                : needsDownload
-                                    ? Wording.of(context).downloadToAbsorb
-                                    : isFinished
-                                        ? Wording.of(context).absorbAgain
-                                        : Wording.of(context).absorb,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: tt.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600, color: onAccent),
-                      )),
-                    ]),
-                  ),
-                  if (showFill)
-                    Positioned(
-                      right: 14,
-                      top: 0,
-                      bottom: 0,
-                      child: Center(
-                        child: Text(
-                          '${(fill * 100).toStringAsFixed(0)}%',
-                          style: tt.labelMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: onAccent.withValues(alpha: 0.85),
-                          ),
-                        ),
-                      ),
-                    ),
-                ]),
-              ),
-            );
-          },
-        ),
-      );
-
-    void startListening() {
-      setState(() => _isAbsorbing = true);
-      _startAbsorb(context, auth: auth, title: title, author: authorName, coverUrl: _coverUrl, duration: duration, chapters: chapters);
-    }
-    final ebookProgressNow = lib.getEbookProgress(widget.itemId);
-    final Widget? secondaryButton = _lookingForNarration
-        ? null
-        : textPrimary
-            ? (media['narration'] != null && !isEbookOnly
-                ? _secondaryIconButton(accent, Icons.headphones_rounded,
-                    lib.isOffline && !DownloadService().isDownloaded(widget.itemId) ? null : startListening,
-                    progress: progress, tooltip: Wording.of(context).absorb)
-                : null)
-            : (ebookFile != null && canReadEbook(ebookFile)
-                ? _secondaryIconButton(accent, Icons.menu_book_rounded, () => _openEbookReader(context, auth, ebookFile, title),
-                    progress: ebookProgressNow, tooltip: l.readEbook)
-                : null);
+    final actions = _forkActionButtons(
+      context: context, cs: cs, tt: tt, l: l, accent: accent, lib: lib, auth: auth,
+      ebookFile: ebookFile, isEbookOnly: isEbookOnly, textPrimary: textPrimary,
+      progress: progress, isFinished: isFinished, duration: duration, chapters: chapters,
+      title: title, authorName: authorName, media: media,
+    );
+    final primaryButton = actions.primary;
+    final secondaryButton = actions.secondary;
 
     return ListView(controller: widget.scrollController, padding: EdgeInsets.fromLTRB(20, 8, 20, 32 + MediaQuery.of(context).viewPadding.bottom), children: [
       Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.24), borderRadius: BorderRadius.circular(2)))),
-      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (_coverUrl != null) ...[
-        GestureDetector(
-          onTap: () => _showFullCover(context, _fullResCoverUrl ?? _coverUrl!, lib.mediaHeaders, title),
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 170),
-            height: 170,
-            width: _squareCovers ? 170 : null,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 16, offset: const Offset(0, 4))],
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: _squareCovers
-                ? (_coverUrl!.startsWith('/')
-                    ? BlurPaddedCover(
-                        blurChild: Image.file(File(_coverUrl!), fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const SizedBox.shrink()),
-                        child: Image.file(File(_coverUrl!), fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) => const SizedBox()),
-                      )
-                    : BlurPaddedCover(
-                        blurChild: CachedNetworkImage(
-                          imageUrl: _coverUrl!, fit: BoxFit.cover,
-                          httpHeaders: lib.mediaHeaders,
-                          errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                        ),
-                        child: CachedNetworkImage(
-                          imageUrl: _coverUrl!, fit: BoxFit.contain,
-                          httpHeaders: lib.mediaHeaders,
-                          placeholder: (_, __) => const SizedBox(),
-                          errorWidget: (_, __, ___) => const SizedBox(),
-                        ),
-                      ))
-                : CachedNetworkImage(
-                    imageUrl: _coverUrl!, fit: BoxFit.contain,
-                    httpHeaders: lib.mediaHeaders,
-                    placeholder: (_, __) => const SizedBox(),
-                    errorWidget: (_, __, ___) => const SizedBox(),
-                  ),
-          ),
-        ),
-        const SizedBox(width: 16),
-      ],
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title, style: tt.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurface)),
-      if (subtitle.isNotEmpty) ...[
-        const SizedBox(height: 4),
-        Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis,
-          style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-      ],
-      const SizedBox(height: 2),
-      _buildAuthorLinks(context, metadata, cs, tt, accent),
-      _buildNarratorLinks(context, metadata, cs, tt, accent),
-      const SizedBox(height: 6),
-      Wrap(spacing: 8, runSpacing: 6, children: [
-        if (headerProgress > 0 && !isFinished)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(color: accent.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(8)),
-            child: Text('${(headerProgress * 100).round()}%',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent)),
-          ),
-        if (bookOrbitOnline)
-          _chip(
-            _readStatusIcon(readStatus),
-            _readStatusLabel(l, readStatus),
-            onTap: _savingStatus ? null : () => _pickReadStatus(auth, lib, readStatus),
-          ),
-      ]),
-      // Series as a pill in the rating's style: a bounded target with its
-      // own edges, so it can't be mistaken for the narrator line above it.
-      if (seriesEntries.isNotEmpty) ...[
-        const SizedBox(height: 8),
-        Wrap(
-          alignment: WrapAlignment.start,
-          spacing: 8,
-          runSpacing: 6,
-          children: [
-            for (final s in seriesEntries)
-              GestureDetector(
-                onTap: () => _openSeries(context, s['id'] as String?, s['name'] as String? ?? ''),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: accent.withValues(alpha: 0.18)),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.auto_stories_rounded, size: 14, color: accent),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        '${s['name'] as String? ?? ''}'
-                        '${(s['sequence'] as String? ?? '').isNotEmpty ? ' #${s['sequence']}' : ''}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(Icons.chevron_right_rounded, size: 16, color: accent.withValues(alpha: 0.6)),
-                  ]),
-                ),
-              ),
-          ],
-        ),
-      ],
-      ])),
-      ]),
+      _forkDetailHeader(
+        context: context, cs: cs, tt: tt, l: l, accent: accent, lib: lib, auth: auth,
+        title: title, subtitle: subtitle, metadata: metadata, seriesEntries: seriesEntries,
+        headerProgress: headerProgress, isFinished: isFinished,
+        bookOrbitOnline: bookOrbitOnline, readStatus: readStatus,
+      ),
       // ─── AUDIBLE RATING (space always reserved) ─────────
       const SizedBox(height: 8),
       if (providerBadges.isNotEmpty)
@@ -1330,42 +946,12 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
         ),
       ],
       const SizedBox(height: 12),
-      Row(children: [
-        if (!isEbookOnly)
-          Expanded(child: DownloadWideButton(itemId: widget.itemId, coverUrl: _coverUrl, title: title, author: authorName, accent: accent, compact: true))
-        else if (!_lookingForNarration && ebookFile != null && canReadEbook(ebookFile))
-          Expanded(child: ListenableBuilder(
-            listenable: DownloadService(),
-            builder: (_, __) {
-              final saved = DownloadService().isDownloaded(widget.itemId);
-              final dlGreen = Theme.of(context).brightness == Brightness.dark ? Colors.greenAccent : Colors.green.shade700;
-              return _iconAction(cs, saved ? Icons.download_done_rounded : Icons.download_rounded,
-                  _ebookOfflineDownloading
-                      ? null
-                      : (saved ? () => _removeEbookOffline(context) : () => _downloadEbookOffline(context, auth, ebookFile, title)),
-                  color: saved ? dlGreen : null, busy: _ebookOfflineDownloading,
-                  tooltip: saved ? l.saved : l.ebookDownload);
-            },
-          )),
-        if (showPreview) ...[
-          const SizedBox(width: 8),
-          Expanded(child: _iconAction(cs,
-              (_preview?.isPlaying ?? false) ? Icons.stop_rounded : Icons.headphones_rounded,
-              () => _togglePreview(context, chapters, duration),
-              busy: _preview?.isLoading ?? false,
-              tooltip: (_preview?.isPlaying ?? false) ? l.chapterStopPreview : l.preview)),
-        ],
-        const SizedBox(width: 8),
-        Expanded(child: _iconAction(cs,
-            isFinished ? Icons.check_circle_rounded : Icons.check_circle_outline_rounded,
-            () => isFinished ? _markNotFinished(context, auth, currentTime, duration) : _markFinished(context, auth, duration),
-            color: isFinished ? Colors.green : null,
-            tooltip: isFinished ? Wording.of(context).fullyAbsorbed : Wording.of(context).fullyAbsorbAction)),
-        const SizedBox(width: 8),
-        Expanded(child: _iconAction(cs, Icons.more_horiz_rounded,
-            () => _showMoreSheet(context, auth, lib, title, authorName, progress, isFinished, duration, ebookFile, isEbookOnly),
-            tooltip: l.moreActions)),
-      ]),
+      _forkIconRow(
+        context: context, cs: cs, l: l, accent: accent, lib: lib, auth: auth,
+        title: title, authorName: authorName, isEbookOnly: isEbookOnly, ebookFile: ebookFile,
+        showPreview: showPreview, chapters: chapters, duration: duration, progress: progress,
+        isFinished: isFinished, currentTime: currentTime,
+      ),
       if (!lib.isOffline && !isEbookOnly) ...[
         const SizedBox(height: 16),
         _listeningStatsBlock(context, cs, tt, accent, title),
@@ -1382,25 +968,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
         if (chapters.isNotEmpty) _chip(Icons.list_rounded, l.chaptersChip(chapters.length)),
         ..._audioInfoChips(media),
         if (publisher.isNotEmpty) _chip(Icons.business_rounded, publisher),
-        for (final entry in labels.take(_tagsExpanded ? labels.length : _tagChipLimit))
-          _chip(
-            entry.$2 ? Icons.tag_rounded : Icons.local_offer_outlined,
-            entry.$1,
-            onTap: () {
-              Navigator.of(context).pop();
-              if (entry.$2) {
-                AppShell.openLibraryWithGenreFilterGlobal(entry.$1);
-              } else {
-                AppShell.openLibraryWithTagFilterGlobal(entry.$1);
-              }
-            },
-          ),
-        if (labels.length > _tagChipLimit)
-          _chip(
-            _tagsExpanded ? Icons.expand_less_rounded : Icons.add_rounded,
-            _tagsExpanded ? l.showLess : '${labels.length - _tagChipLimit}',
-            onTap: () => setState(() => _tagsExpanded = !_tagsExpanded),
-          ),
+        ..._forkTagChips(context, l, labels),
         if (progressData?['startedAt'] is num)
           _chip(Icons.play_circle_outline_rounded, l.startedDate(_fmtDate((progressData!['startedAt'] as num).toInt())),
                 key: ValueKey('book-started-date-${widget.itemId}'),
