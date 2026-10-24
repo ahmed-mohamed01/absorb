@@ -1421,7 +1421,7 @@ class ApiService {
   /// Build a cover image URL for a library item.
   /// [coverSlot] picks BookOrbit's 'audio' (square) or 'ebook' (portrait)
   /// cover and is ignored on Audiobookshelf, which has one.
-  String getCoverUrl(String itemId, {int? width = 400, int? updatedAt, String? coverSlot}) {
+  String getCoverUrl(String itemId, {int? width = 400, int? updatedAt, String? coverSlot, double? coverRatio}) {
     var url = '$_cleanBaseUrl/api/items/$itemId/cover?token=$token';
     if (width != null) url += '&width=$width';
     if (updatedAt != null) url += '&ts=$updatedAt';

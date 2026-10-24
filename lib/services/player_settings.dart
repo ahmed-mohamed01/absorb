@@ -1167,11 +1167,16 @@ class PlayerSettings {
     _notify();
   }
 
+  /// Shapes BookOrbit sets per library, used when no override is chosen here.
+  static Map<String, bool> serverRectByLibrary = {};
+
   /// Cover shape for a library: its override if set, else the global toggle.
   static Future<bool> getRectangleCoversFor(String? libraryId) async {
     if (libraryId != null) {
       final v = await getRectangleCoversOverride(libraryId);
       if (v != null) return v == 'rect';
+      final server = serverRectByLibrary[libraryId];
+      if (server != null) return server;
     }
     return getRectangleCovers();
   }

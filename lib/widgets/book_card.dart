@@ -57,7 +57,7 @@ class BookCard extends StatelessWidget {
     final title = metadata['title'] as String? ?? l.bookCardUnknownTitle;
     final subtitle = metadata['subtitle'] as String? ?? '';
     final authorName = metadata['authorName'] as String? ?? '';
-    final coverUrl = lib.getCoverUrl(itemId);
+    final coverUrl = lib.getCoverUrl(itemId, coverRatio: coverAspectRatio);
 
     // Progress from LibraryProvider (fetched via /api/me, same source as book detail)
     final progress = lib.getProgress(itemId);

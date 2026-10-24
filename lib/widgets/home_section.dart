@@ -68,7 +68,22 @@ class HomeSection extends StatelessWidget {
             e is Map<String, dynamic> && e['recentEpisode'] != null);
     final effectiveEpisode = isEpisodeSection || onlyEpisodeEntities;
 
-    final bool isRectCover = coverAspectRatio < 1.0;
+    // BookOrbit says each book's own cover frame, so a shelf can hold square
+    // audiobooks next to portrait epubs. Covers share one height and the
+    // square ones come out wider.
+    double? frameOf(dynamic e) {
+      if (e is! Map<String, dynamic>) return null;
+      final m = e['media'];
+      final f = m is Map ? m['coverAspectRatio'] : null;
+      return f is num ? f.toDouble() : null;
+    }
+    final bool mixedShapes = context.read<LibraryProvider>().homeDashboard &&
+        !isContinueListening &&
+        !isSeriesSection &&
+        !isAuthorSection &&
+        !isEpisodeSection &&
+        entities.any((e) => frameOf(e) != null);
+    final bool isRectCover = coverAspectRatio < 1.0 || mixedShapes;
     // Book and series covers follow the cover size setting like the library
     // grid does; the wide continue card, authors and episodes keep their size.
     final bool coverCard =
@@ -91,7 +106,7 @@ class HomeSection extends StatelessWidget {
     double lineHeight(TextStyle? style) =>
         scaler.scale((style?.fontSize ?? 12) * (style?.height ?? 1.4));
     final double textBlock = 6 +
-        lineHeight(tt.labelMedium) * (isRectCover ? 1 : 2) +
+        lineHeight(tt.labelMedium) * (isRectCover && !mixedShapes ? 1 : 2) +
         lineHeight(tt.labelSmall) * (subtitleLine ? 2 : 1) +
         6;
     final double cardHeight = isContinueListening
@@ -100,7 +115,9 @@ class HomeSection extends StatelessWidget {
             ? 200
             : isAuthorSection
                 ? 170
-                : cardWidth / coverAspectRatio + textBlock;
+                : mixedShapes
+                    ? cardWidth / (2 / 3) + textBlock
+                    : cardWidth / coverAspectRatio + textBlock;
 
     return Padding(
       padding: const EdgeInsets.only(top: 24),
@@ -147,6 +164,7 @@ class HomeSection extends StatelessWidget {
           SizedBox(
             height: cardHeight,
             child: _SnapScrollList(
+              snap: !mixedShapes,
               cardWidth: cardWidth,
               itemCount: entities.length,
               itemBuilder: (context, index) {
@@ -205,14 +223,15 @@ class HomeSection extends StatelessWidget {
                   );
                 }
 
+                final itemRatio = mixedShapes ? (frameOf(entity) ?? 2 / 3) : coverAspectRatio;
                 return SizedBox(
-                  width: cardWidth,
+                  width: mixedShapes ? cardWidth / (2 / 3) * itemRatio : cardWidth,
                   child: BookCard(
                     item: entity,
                     showProgress: isContinueListening,
                     showSubtitle: subtitleLine,
                     isWide: isContinueListening,
-                    coverAspectRatio: isContinueListening ? 1.0 : coverAspectRatio,
+                    coverAspectRatio: isContinueListening ? 1.0 : itemRatio,
                     sourcePlaylistId: sourcePlaylistId,
                     sourcePlaylistEpisodeId: sourcePlaylistEpisodeId,
                     sourceCollectionId: sourceCollectionId,
@@ -254,10 +273,12 @@ class HomeSection extends StatelessWidget {
 /// A horizontal scrolling list with smooth snap-to-card behavior.
 class _SnapScrollList extends StatefulWidget {
   final double cardWidth;
+  final bool snap;
   final int itemCount;
   final Widget Function(BuildContext, int) itemBuilder;
 
   const _SnapScrollList({
+    this.snap = true,
     required this.cardWidth,
     required this.itemCount,
     required this.itemBuilder,
@@ -288,6 +309,7 @@ class _SnapScrollListState extends State<_SnapScrollList> {
 
     return NotificationListener<ScrollEndNotification>(
       onNotification: (notification) {
+        if (!widget.snap) return false;
         final maxExtent = _controller.position.maxScrollExtent;
         final offset = _controller.offset;
         double targetOffset;

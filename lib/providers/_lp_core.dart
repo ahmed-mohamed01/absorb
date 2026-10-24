@@ -1962,17 +1962,34 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
   // ── Personalized home view ──
 
+  void _resetHomeDashboard() {
+    _homeDashboard = false;
+    _sectionsByLibrary.remove(BookOrbitApiService.dashboardLibraryId);
+    _sectionsFetchedAt.remove(BookOrbitApiService.dashboardLibraryId);
+  }
+
+  Future<void> setHomeDashboard(bool value) async {
+    if (_homeDashboard == value || (value && !canShowDashboard)) return;
+    _homeDashboard = value;
+    _personalizedSections = _sectionsByLibrary[_homeLibId] ?? [];
+    notifyListeners();
+    await loadPersonalizedView(force: true);
+  }
+
   Future<void> loadPersonalizedView({bool force = false}) async {
     final existing = _personalizedInFlight;
     if (existing != null) {
       await existing;
-      return;
+      // A fetch that was for another Home (a library, or the Dashboard) says
+      // nothing about this one.
+      if (_personalizedInFlightFor == _homeLibId) return;
+      return loadPersonalizedView(force: true);
     }
 
     // Per-library cooldown, so a book <-> podcast tab flip that returns
     // within the window reuses the cached sections instead of refetching.
     if (!force) {
-      final fetchedAt = _sectionsFetchedAt[_selectedLibraryId];
+      final fetchedAt = _sectionsFetchedAt[_homeLibId];
       if (fetchedAt != null &&
           DateTime.now().difference(fetchedAt) <
               _StateMixin._personalizedFetchCooldown) {
@@ -1980,13 +1997,16 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       }
     }
 
+    final homeId = _homeLibId;
     final inFlight = _doLoadPersonalizedView();
     _personalizedInFlight = inFlight;
+    _personalizedInFlightFor = homeId;
     try {
       await inFlight;
     } finally {
       if (identical(_personalizedInFlight, inFlight)) {
         _personalizedInFlight = null;
+        _personalizedInFlightFor = null;
       }
     }
   }
@@ -2005,13 +2025,16 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       notifyListeners();
     }
 
+    final homeId = _homeLibId!;
     try {
       await _refreshProgress();
-      _personalizedSections = _withoutJustHidden(await _api!.getPersonalizedView(
-            _selectedLibraryId!,
+      final fetched = await _api!.getPersonalizedView(
+            homeId,
             include: const ['numEpisodesIncomplete'],
           ) ??
-          []);
+          [];
+      if (_homeLibId != homeId) return;
+      _personalizedSections = _withoutJustHidden(fetched);
       for (final section in _personalizedSections) {
         for (final e in (section['entities'] as List<dynamic>? ?? [])) {
           if (e is Map<String, dynamic>) {
@@ -2035,8 +2058,8 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       _injectDownloadedSection();
 
       // Snapshot after injection so a tab flip restores the full shelf set.
-      _sectionsByLibrary[_selectedLibraryId!] = _personalizedSections;
-      _sectionsFetchedAt[_selectedLibraryId!] = DateTime.now();
+      _sectionsByLibrary[homeId] = _personalizedSections;
+      _sectionsFetchedAt[homeId] = DateTime.now();
       SiriService().scheduleCatalogUpdate();
 
       if (isPodcastLibrary) {
@@ -2077,7 +2100,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
     if (!force &&
         _lastProgressShelvesFetchAt != null &&
-        _lastProgressShelvesLibraryId == _selectedLibraryId &&
+        _lastProgressShelvesLibraryId == _homeLibId &&
         DateTime.now().difference(_lastProgressShelvesFetchAt!) <
             _StateMixin._progressShelvesFetchCooldown) {
       return;
@@ -2096,7 +2119,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
   Future<void> _loadProgressShelves({required String reason}) async {
     final api = _api;
-    final libraryId = _selectedLibraryId;
+    final libraryId = _homeLibId;
     if (api == null || libraryId == null) return;
 
     try {
@@ -2109,7 +2132,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
           [];
       _lastProgressShelvesFetchAt = DateTime.now();
       _lastProgressShelvesLibraryId = libraryId;
-      if (_selectedLibraryId != libraryId || isOffline) return;
+      if (_homeLibId != libraryId || isOffline) return;
 
       _mergeProgressShelves(sections);
       await (this as _AbsorbingMixin)._updateAbsorbingCache();

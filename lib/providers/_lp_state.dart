@@ -10,6 +10,7 @@ mixin _StateMixin on ChangeNotifier {
   List<dynamic> _libraries = [];
   bool _librariesFromCache = false;
   String? _selectedLibraryId;
+  bool _homeDashboard = false;
   List<dynamic> _personalizedSections = [];
   // Books and series just taken off the Continue shelves, kept off them
   // until the server's own lists catch up.
@@ -40,6 +41,7 @@ mixin _StateMixin on ChangeNotifier {
   final Map<String, DateTime> _sectionsFetchedAt = {};
 
   Future<void>? _personalizedInFlight;
+  String? _personalizedInFlightFor;
   Future<void>? _progressShelvesInFlight;
   DateTime? _lastProgressShelvesFetchAt;
   String? _lastProgressShelvesLibraryId;
@@ -136,6 +138,15 @@ mixin _StateMixin on ChangeNotifier {
 
   List<dynamic> get libraries => _libraries;
   String? get selectedLibraryId => _selectedLibraryId;
+
+  /// Home can show every BookOrbit library at once while the Library tab
+  /// keeps browsing the selected one.
+  bool get homeDashboard => _homeDashboard && canShowDashboard;
+  String? get _homeLibId => homeDashboard ? BookOrbitApiService.dashboardLibraryId : _selectedLibraryId;
+
+  bool get canShowDashboard =>
+      _api?.isBookOrbit == true &&
+      _libraries.where((l) => l is Map && l['mediaType'] != 'podcast' && l['bookDock'] != true).length > 1;
   List<dynamic> get personalizedSections => _personalizedSections;
   List<dynamic> get series => _series;
   bool get isLoading => _isLoading;
@@ -387,7 +398,7 @@ mixin _StateMixin on ChangeNotifier {
     return ctx != null ? AppLocalizations.of(ctx) : null;
   }
 
-  String? getCoverUrl(String? itemId, {int width = 400}) {
+  String? getCoverUrl(String? itemId, {int width = 400, double? coverRatio}) {
     if (itemId == null) return null;
 
     final isCompositeKey = itemId.length > 36;
@@ -402,7 +413,7 @@ mixin _StateMixin on ChangeNotifier {
       final overrideCover = MetadataOverrideService().coverUrlFor(itemId);
       if (overrideCover != null && overrideCover.isNotEmpty) return overrideCover;
       final ts = _itemUpdatedAt[apiItemId];
-      return _api!.getCoverUrl(apiItemId, width: width, updatedAt: ts);
+      return _api!.getCoverUrl(apiItemId, width: width, updatedAt: ts, coverRatio: coverRatio);
     }
 
     final dl = DownloadService().getInfo(itemId);
@@ -423,7 +434,7 @@ mixin _StateMixin on ChangeNotifier {
       }
     }
 
-    if (_api != null) return _api!.getCoverUrl(apiItemId, width: width);
+    if (_api != null) return _api!.getCoverUrl(apiItemId, width: width, coverRatio: coverRatio);
     return dl.coverUrl;
   }
 }

@@ -396,7 +396,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           child: SizedBox(
             // Taller row when 2:3 covers are on; the card's
             // cover alone is ~225 with rectangle covers.
-            height: _rectangleCovers ? 320 : 250,
+            height: _rectangleCovers || (lib.homeDashboard && items.any((e) => e is Map && (e['media'] as Map?)?['coverAspectRatio'] != null)) ? 320 : 250,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -447,7 +447,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
     final lowerFade = Color.lerp(cs.surface, scaffoldBg, 0.55) ?? scaffoldBg;
     final lib = context.watch<LibraryProvider>();
     final allLibraries = lib.libraries;
-    final libraryName = lib.selectedLibrary?['name'] as String? ?? l.libraryFallback;
+    final libraryName = lib.homeDashboard ? 'Dashboard' : lib.selectedLibrary?['name'] as String? ?? l.libraryFallback;
     // Cover shape can differ per library; re-resolve after a library switch.
     if (lib.selectedLibraryId != _coversLibraryId) {
       _coversLibraryId = lib.selectedLibraryId;
@@ -605,7 +605,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                           borderRadius: BorderRadius.circular(20),
                           clipBehavior: Clip.antiAlias,
                           child: InkWell(
-                            onTap: () => showLibraryPickerSheet(context, lib),
+                            onTap: () => showLibraryPickerSheet(context, lib, forHome: true),
                             borderRadius: BorderRadius.circular(20),
                             child: Container(
                               padding: const EdgeInsets.symmetric(
@@ -903,6 +903,12 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
     return '${formatHm(s)} left';
   }
 
+  double? get _bookFrame {
+    if (!widget.lib.homeDashboard) return null;
+    final f = (widget.item['media'] as Map?)?['coverAspectRatio'];
+    return f is num ? f.toDouble() : null;
+  }
+
   Widget _buildCoverImage(String? coverUrl, ColorScheme cs, Map<String, String> headers) {
     final fallback = Container(
       color: cs.surfaceContainerHighest,
@@ -929,7 +935,8 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
     }
 
     // Rectangle mode: tile aspect (2:3) matches most book covers, so fill it.
-    if (widget.rectangleCovers) return image(fit: BoxFit.cover);
+    // A book's own frame matches its art too.
+    if (widget.rectangleCovers || _bookFrame != null) return image(fit: BoxFit.cover);
 
     // Square mode: tile is 1:1. Most audiobook covers are square and fill it,
     // but rectangular covers would letterbox - fill the gaps with a blurred
@@ -1001,7 +1008,8 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
         ? (metadata['title'] as String? ?? '')
         : (metadata['authorName'] as String? ?? '');
 
-    final coverUrl = lib.getCoverUrl(itemId);
+    final frame = _bookFrame;
+    final coverUrl = lib.getCoverUrl(itemId, coverRatio: frame);
     _deriveScheme(coverUrl);
 
     final episodeId = recentEpisode?['id'] as String?;
@@ -1135,7 +1143,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
           onLongPress: widget.selectionMode ? null : openQuickActions,
           borderRadius: BorderRadius.circular(14),
           child: SizedBox(
-            width: 150,
+            width: frame != null ? 130 / (2 / 3) * frame + 20 : 150,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1157,7 +1165,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: AspectRatio(
-                      aspectRatio: widget.rectangleCovers ? 2 / 3 : 1,
+                      aspectRatio: frame ?? (widget.rectangleCovers ? 2 / 3 : 1),
                       child: Stack(children: [
                   Positioned.fill(
                     child: _buildCoverImage(coverUrl, cs, lib.mediaHeaders),

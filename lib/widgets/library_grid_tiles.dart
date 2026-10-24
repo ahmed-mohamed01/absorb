@@ -77,7 +77,7 @@ class _GridBookTileState extends State<GridBookTile> {
     final title = metadata['title'] as String? ?? l.unknown;
     final subtitle = metadata['subtitle'] as String? ?? '';
     final author = metadata['authorName'] as String? ?? '';
-    final coverUrl = lib.getCoverUrl(itemId);
+    final coverUrl = lib.getCoverUrl(itemId, coverRatio: widget.coverAspectRatio);
     final progress = lib.getProgress(itemId);
     final isExplicit = PlayerSettings.showExplicitBadge && metadata['explicit'] == true;
     final isDownloaded = _dl.isDownloaded(itemId);

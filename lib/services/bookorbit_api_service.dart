@@ -223,12 +223,20 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   static Future<void> loadCoverShape() async {
     final global = await PlayerSettings.getRectangleCovers();
     final byLibrary = <String, bool>{};
+    final serverShape = <String, bool>{};
     for (final lib in _librariesCache ?? const <Map<String, dynamic>>[]) {
       final id = '${lib['id']}';
       final v = await PlayerSettings.getRectangleCoversOverride(id);
-      if (v != null) byLibrary[id] = v == 'rect';
+      if (v != null) {
+        byLibrary[id] = v == 'rect';
+      } else {
+        final ratio = (lib['settings'] as Map?)?['coverAspectRatio'];
+        if (ratio is num) serverShape[id] = ratio != 1;
+      }
     }
-    final changed = global != _rectCovers ||
+    final shapeChanged = !mapEquals(serverShape, PlayerSettings.serverRectByLibrary);
+    PlayerSettings.serverRectByLibrary = serverShape;
+    final changed = shapeChanged || global != _rectCovers ||
         byLibrary.length != _rectCoversByLibrary.length ||
         byLibrary.entries.any((e) => _rectCoversByLibrary[e.key] != e.value);
     if (!changed) return;
@@ -243,7 +251,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
 
   String _listCoverSlot(String itemId) {
     final lib = _bookLibrary[_key(itemId)];
-    final rect = (lib == null ? null : _rectCoversByLibrary[lib]) ?? _rectCovers;
+    final rect = (lib == null ? null : _rectCoversByLibrary[lib] ?? PlayerSettings.serverRectByLibrary[lib]) ?? _rectCovers;
     return rect ? 'ebook' : 'audio';
   }
 
@@ -937,10 +945,12 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         if (method != 'GET') return null;
         if (n == 2) {
           final dock = await _dockLibrary();
-          return _json({'libraries': [...await _libraries(), if (dock != null) dock]});
+          final libs = await _libraries();
+          return _json({'libraries': [...libs, if (dock != null) dock]});
         }
         final libId = at(2);
         if (libId == ApiService.bookDockLibraryId) return _routeDockLibrary(n, at(3), q);
+        if (libId == dashboardLibraryId) return _routeDashboardLibrary(n, at(3), q);
         if (n == 3) {
           final lib = (await _libraries()).firstWhere((l) => l['id'] == libId,
               orElse: () => const <String, dynamic>{});
@@ -1266,11 +1276,21 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     if (cv != null) _coverVersions[_key(id)] = cv;
     if (libraryId != null) _bookLibrary[_key(id)] = libraryId;
     final manifest = _manifests[_key(id)];
-    return BookOrbitMapper.item(
+    final item = BookOrbitMapper.item(
       card: card,
       manifest: manifest,
       libraryId: libraryId ?? _bookLibrary[_key(id)],
     );
+    return _withFrame(item, card['coverAspectRatio']);
+  }
+
+  /// The book's own cover frame, so screens can draw each book in the shape
+  /// of its primary file.
+  static Map<String, dynamic> _withFrame(Map<String, dynamic> item, Object? frame) {
+    if (frame is String && item['media'] is Map) {
+      (item['media'] as Map)['coverAspectRatio'] = frame == '1/1' ? 1.0 : 2 / 3;
+    }
+    return item;
   }
 
   Future<Map<String, dynamic>> _detail(String bookId, {bool fresh = false}) async {
@@ -1322,7 +1342,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   Future<Map<String, dynamic>> _item(String bookId, {bool withProgress = false}) async {
     final detail = await _detail(bookId, fresh: true);
     final manifest = _detailHasAudio(detail) ? await _manifest(bookId) : null;
-    final item = BookOrbitMapper.item(detail: detail, manifest: manifest);
+    final item = _withFrame(BookOrbitMapper.item(detail: detail, manifest: manifest), detail['coverAspectRatio']);
     if (withProgress) {
       final p = await _itemProgress(bookId, detail: detail, manifest: manifest);
       if (p != null) item['userMediaProgress'] = p;
@@ -1659,7 +1679,10 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     return (res['items'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>().toList();
   }
 
+  static const dashboardLibraryId = 'dashboard';
+
   Future<List<Map<String, dynamic>>> _personalized(String libId, Map<String, String> q) async {
+    final global = libId == dashboardLibraryId;
     final limit = (int.tryParse(q['limit'] ?? '') ?? 15).clamp(1, 50);
     final wanted = (q['shelves'] ?? '').split(',').where((s) => s.isNotEmpty).toSet();
     bool want(String id) => wanted.isEmpty || wanted.contains(id);
@@ -1673,7 +1696,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
 
     Map<String, dynamic> shelf(String id, String label, List<Map<String, dynamic>> cards, {bool seriesEntity = false}) {
       final entities = cards.where((c) => !hidden(id, c)).map((c) {
-        final item = _cardItem(c, libraryId: libId);
+        final item = _cardItem(c, libraryId: '${c['libraryId'] ?? libId}');
         if (seriesEntity && c['seriesName'] != null) {
           ((item['media'] as Map<String, dynamic>)['metadata'] as Map<String, dynamic>)['series'] = {
             'id': '${c['seriesId'] ?? 'name:${c['seriesName']}'}',
@@ -1712,7 +1735,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     List<Map<String, dynamic>>? inProgress;
     var listenIds = <String>{}, readIds = <String>{};
     final narrationPlayed = <String>{};
-    Map media(Map<String, dynamic> c) => _cardItem(c, libraryId: libId)['media'] as Map? ?? const {};
+    Map media(Map<String, dynamic> c) => _cardItem(c, libraryId: '${c['libraryId'] ?? libId}')['media'] as Map? ?? const {};
     Future<List<Map<String, dynamic>>> progressCards() async {
       final had = inProgress;
       if (had != null) return had;
@@ -1734,7 +1757,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
       readIds.addAll(ebookRead.map((c) => '${c['id']}'));
       final seen = <String>{};
       final merged = [...listening, ...reading, ...ebookRead].where((c) => seen.add('${c['id']}')).toList();
-      final cards = await _inProgressHere(merged, libId);
+      final cards = global ? merged : await _inProgressHere(merged, libId);
       // BookOrbit 3.5.0 lists a narrated EPUB under listening once it has
       // been played; an older server never does, and there a listening spot
       // on the book's progress tells.
@@ -1805,7 +1828,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
       return shelf('continue-reading', 'Continue Reading', cards);
     });
     await add('continue-series', () async {
-      final cards = await _hasOneLibrary()
+      final cards = global || await _hasOneLibrary()
           ? await _shelfCards('up-next-in-series', limit)
           : await _libraryQueryCards(
               libId,
@@ -1816,10 +1839,12 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
       return shelf('continue-series', 'Continue Series', cards.take(limit).toList(), seriesEntity: true);
     });
     await add('recently-added', () async {
-      final cards = await _libraryQueryCards(libId, sort: [{'field': 'addedAt', 'dir': 'desc'}], size: limit);
+      final cards = global
+          ? await _shelfCards('recently-added', limit)
+          : await _libraryQueryCards(libId, sort: [{'field': 'addedAt', 'dir': 'desc'}], size: limit);
       return shelf('recently-added', 'Recently Added', cards);
     });
-    await add('listen-again', () async {
+    if (!global) await add('listen-again', () async {
       final cards = await _libraryQueryCards(
         libId,
         // Skimmed counts as finished everywhere else, here too.
@@ -1830,12 +1855,14 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
       return shelf('listen-again', 'Listen Again', cards);
     });
     await add('discover', () async {
-      final cards = await _libraryQueryCards(
-        libId,
-        rules: [_rule('readStatus', 'includesAny', ['unread'])],
-        sort: [{'field': 'random', 'dir': 'asc'}],
-        size: limit,
-      );
+      final cards = global
+          ? await _shelfCards('random', limit)
+          : await _libraryQueryCards(
+              libId,
+              rules: [_rule('readStatus', 'includesAny', ['unread'])],
+              sort: [{'field': 'random', 'dir': 'asc'}],
+              size: limit,
+            );
       return shelf('discover', 'Discover', cards);
     });
     return shelves;
@@ -2474,12 +2501,16 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   /// With [coverSlot] the URL shows that slot only (no fallback to the other
   /// one), which is what the cover editor wants.
   @override
-  String getCoverUrl(String itemId, {int? width = 400, int? updatedAt, String? coverSlot}) {
+  String getCoverUrl(String itemId, {int? width = 400, int? updatedAt, String? coverSlot, double? coverRatio}) {
     if (ApiService.isBookDockItem(itemId)) return _dockCoverUrl(_dockFileId(itemId));
     final kind = coverSlot == null && width != null && width <= 400 ? 'thumbnail' : 'cover';
     final cv = _coverVersions[_key(itemId)];
     final t = cv == null ? '' : '&t=${Uri.encodeQueryComponent(cv)}';
-    final slot = coverSlot == null ? _listCoverSlot(itemId) : '$coverSlot&strict=true';
+    final slot = coverSlot != null
+        ? '$coverSlot&strict=true'
+        : coverRatio != null
+            ? (coverRatio >= 0.99 ? 'audio' : 'ebook')
+            : _listCoverSlot(itemId);
     return BookOrbitMediaProxy.instance.urlFor('/api/v1/books/$itemId/$kind?medium=$slot$t');
   }
 
@@ -2687,6 +2718,48 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
 
   String _dockFileId(String itemId) =>
       itemId.substring(BookOrbitMapper.dockItemPrefix.length);
+
+  Map<String, dynamic> _dashboardLibrary() => {
+        'id': dashboardLibraryId,
+        'name': 'Dashboard',
+        'displayOrder': -1,
+        'icon': 'database',
+        'mediaType': 'book',
+        'provider': 'audible',
+        'folders': const [],
+        'settings': {'coverAspectRatio': 0},
+      };
+
+  /// The dashboard is every library at once: its shelves come from
+  /// BookOrbit's own cross-library scrollers, and it has no books of its
+  /// own to browse.
+  Future<http.Response?> _routeDashboardLibrary(int n, String sub, Map<String, String> q) async {
+    if (n == 3) return _json(_dashboardLibrary());
+    final page = int.tryParse(q['page'] ?? '') ?? 0;
+    final limit = int.tryParse(q['limit'] ?? '') ?? 20;
+    switch (sub) {
+      case 'personalized':
+        return _json(await _cached('personalized:$dashboardLibraryId:${q['shelves'] ?? ''}:${q['limit'] ?? ''}',
+            const Duration(seconds: 20), () => _personalized(dashboardLibraryId, q)));
+      case 'items':
+      case 'series':
+      case 'collections':
+      case 'playlists':
+        return _json({'results': const [], 'total': 0, 'limit': limit, 'page': page});
+      case 'authors':
+        return _json(q.containsKey('page')
+            ? {'results': const [], 'total': 0, 'limit': limit, 'page': page}
+            : {'authors': const []});
+      case 'narrators':
+        return _json({'narrators': const []});
+      case 'filterdata':
+        return _json({
+          'authors': const [], 'series': const [], 'genres': const [], 'tags': const [],
+          'narrators': const [], 'languages': const [], 'publishers': const [], 'publishedDecades': const [],
+        });
+    }
+    return null;
+  }
 
   Future<Map<String, dynamic>?> _dockLibrary() async {
     if (!await _can('book_dock_access')) return null;

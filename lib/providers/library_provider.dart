@@ -174,6 +174,7 @@ class LibraryProvider extends ChangeNotifier
         _libraries = [];
         _librariesFromCache = false;
         _selectedLibraryId = null;
+        _resetHomeDashboard();
         _personalizedSections = [];
         _series = [];
         _progressMap = {};
@@ -336,6 +337,7 @@ class LibraryProvider extends ChangeNotifier
       _localProgressOverrides.clear();
       _itemUpdatedAt.clear();
       _selectedLibraryId = null;
+      _resetHomeDashboard();
       _errorMessage = null;
       _connectivitySub?.cancel();
       _connectivityDebounce?.cancel();
