@@ -198,6 +198,7 @@ class BookOrbitMapper {
       'narrators': narratorNames,
       'series': seriesList,
       'genres': _strings(src['genres']),
+      'pageCount': src['pageCount'] ?? src['pages'] ?? (src['ebookMetadata'] is Map ? (src['ebookMetadata'] as Map)['pageCount'] : null),
       'publishedYear': src['publishedYear'] == null ? null : '${src['publishedYear']}',
       'publishedDate': src['publishedDate'],
       'publisher': src['publisher'],

@@ -410,6 +410,22 @@ class ReadingLogCard extends StatelessWidget {
       ? _reached(e)
       : '${_delta(e.delta!)} \u2192 ${_reached(e)}';
 
+  /// [change] as shown, with the arrow drawn as an icon centred on the digits:
+  /// the font's own arrow sat low and thin beside them.
+  static InlineSpan changeSpan(ReadingLogEntry e, TextStyle? style) => e.delta == null
+      ? TextSpan(text: _reached(e), style: style)
+      : arrowSpan(_delta(e.delta!), _reached(e), style);
+
+  /// "[from] → [to]" with the arrow as a centred icon in [style]'s colour.
+  static InlineSpan arrowSpan(String from, String to, TextStyle? style) => TextSpan(style: style, children: [
+        TextSpan(text: '$from '),
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Icon(Icons.arrow_forward_rounded, size: (style?.fontSize ?? 12) * 1.05, color: style?.color),
+        ),
+        TextSpan(text: ' $to'),
+      ]);
+
   Widget _row(
     BuildContext context,
     ReadingLogEntry e,
@@ -459,7 +475,7 @@ class ReadingLogCard extends StatelessWidget {
       children: [
         SizedBox(
           width: cols.change,
-          child: Text(ReadingLogCard.change(e),
+          child: Text.rich(ReadingLogCard.changeSpan(e, change),
               textAlign: TextAlign.left, maxLines: 1, softWrap: false, style: change),
         ),
         const SizedBox(width: 8),
@@ -564,8 +580,11 @@ class _Columns {
 
     double widest(Iterable<String> texts, TextStyle? style) =>
         texts.fold(0, (m, t) => math.max(m, w(t, style)));
+    // The row draws the arrow as an icon (changeSpan), which can be wider
+    // than the font's arrow measured here, so the column takes the gap.
+    final arrowGap = math.max(0.0, scaler.scale((change?.fontSize ?? 12) * 1.05) - w('\u2192', change)).ceilToDouble();
     return _Columns(
-      widest(rows.map(ReadingLogCard.change), change),
+      widest(rows.map(ReadingLogCard.change), change) + arrowGap,
       widest([
         '0m',
         ...rows.map((e) => ReadingLogCard.length(e.seconds)),

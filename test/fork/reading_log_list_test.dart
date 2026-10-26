@@ -51,7 +51,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(find.text('Read-along · Absorb'), findsWidgets);
-      expect(find.text('+25.1% → 65%'), findsOneWidget);
+      expect(find.text('+25.1% \uFFFC 65%', findRichText: true), findsOneWidget);
       expect(
         find.text('Big jump for 15s · likely a position sync'),
         findsWidgets,

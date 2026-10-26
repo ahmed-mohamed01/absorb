@@ -218,8 +218,8 @@ class DownloadWideButton extends StatefulWidget {
   final String title;
   final String? author;
   final Color accent;
-  final bool compact;
-  const DownloadWideButton({super.key, required this.itemId, this.coverUrl, required this.title, this.author, required this.accent, this.compact = false});
+  final bool iconOnly;
+  const DownloadWideButton({super.key, required this.itemId, this.coverUrl, required this.title, this.author, required this.accent, this.iconOnly = false});
   @override State<DownloadWideButton> createState() => _DownloadWideButtonState();
 }
 
@@ -255,12 +255,22 @@ class _DownloadWideButtonState extends State<DownloadWideButton> {
       color = Theme.of(context).colorScheme.onSurfaceVariant;
     }
 
-    return Tooltip(
-      message: widget.compact ? label : '',
-      child: GestureDetector(
+    if (widget.iconOnly) {
+      if (context.watch<LibraryProvider>().isOffline && !downloaded && !downloading) return const SizedBox.shrink();
+      // Like the bookmark beside it: the icon itself says Saved, in the
+      // Saved button's green, with no backing behind it.
+      return IconButton(tooltip: label, onPressed: () => _handleTap(context),
+        icon: SizedBox(width: 26, height: 26, child: Stack(alignment: Alignment.center, children: [
+          if (downloading) CircularProgressIndicator(value: progress, strokeWidth: 2.5, color: widget.accent),
+          Icon(downloaded ? Icons.download_done_rounded : icon, size: downloading ? 16 : 24,
+            color: downloaded || downloading ? color : null),
+        ])));
+    }
+
+    return GestureDetector(
       onTap: () => _handleTap(context),
       child: Container(
-        height: widget.compact ? 44 : 36,
+        height: 36,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: downloaded ? dlGreen.withValues(alpha: 0.06) : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06),
@@ -281,16 +291,14 @@ class _DownloadWideButtonState extends State<DownloadWideButton> {
           Center(child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: widget.compact ? 20 : 16, color: color),
-              if (!widget.compact) ...[
-                const SizedBox(width: 8),
-                Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
-              ],
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 8),
+              Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500)),
             ],
           )),
         ]),
       ),
-    ));
+    );
   }
 
   void _handleTap(BuildContext context) async {

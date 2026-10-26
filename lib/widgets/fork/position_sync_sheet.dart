@@ -70,15 +70,17 @@ const double _railGapHalf = 18;
 
 // ─── Button ─────────────────────────────────────────────────
 
-/// The detail icon row's Position sync button. It takes its own slot in the
-/// row (with the gap before it) and gives it up for a book with nothing to
-/// link, so build it as a direct child of the row.
+/// The detail page's top-bar Position sync button. It shows nothing for a
+/// book with nothing to link.
 class ForkSyncButton extends StatefulWidget {
   final String itemId;
   final Color accent;
   final BookOrbitApiService api;
   final String title;
   final String authorName;
+  /// The cover's container colour, which tints the sheet like the page it
+  /// opens over. Null keeps the plain sheet colour.
+  final Color? tint;
 
   const ForkSyncButton({
     super.key,
@@ -87,6 +89,7 @@ class ForkSyncButton extends StatefulWidget {
     required this.api,
     required this.title,
     required this.authorName,
+    this.tint,
   });
 
   /// Only BookOrbit books on a reachable server; dock items have no numeric
@@ -130,71 +133,37 @@ class _ForkSyncButtonState extends State<ForkSyncButton> {
       listenable: _c,
       builder: (context, _) {
         if (!_c.eligible) return const SizedBox.shrink();
-        return Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(left: 8),
-            child: _button(context),
-          ),
-        );
+        return _barButton(context);
       },
     );
   }
 
-  Widget _button(BuildContext context) {
+  /// The same states as [_button] on a bare icon for the detail page's top
+  /// bar, drawn the way the bookmark beside it is: the sheet's swap icon,
+  /// outlined until the editions are linked, filled in the cover's accent
+  /// when they're in sync, outlined in the accent when one wants checking,
+  /// filled red when something needs attention, and in the blue build ring
+  /// while a read-along is made.
+  Widget _barButton(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final accent = widget.accent;
     final state = _c.buttonState;
-    final lit = state != SyncButtonState.loading && state != SyncButtonState.notLinked;
-    final fill = lit ? accent.withValues(alpha: 0.08) : cs.onSurface.withValues(alpha: 0.06);
-    final dot = switch (state) {
-      SyncButtonState.inSync => _green,
-      SyncButtonState.checkSync => _amber,
-      SyncButtonState.needsAttention => _red,
-      _ => null,
-    };
     final building = state == SyncButtonState.building;
-    return Tooltip(
-      message: _c.buttonTooltip,
-      child: GestureDetector(
-        onTap: () => showPositionSyncSheet(context, _c, accent,
-            coverHeaders: context.read<LibraryProvider>().mediaHeaders),
-        child: Container(
-          height: 44,
-          decoration: BoxDecoration(
-            color: fill,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: lit ? accent.withValues(alpha: 0.35) : cs.onSurface.withValues(alpha: 0.08)),
-          ),
-          child: Stack(alignment: Alignment.center, children: [
-            if (building)
-              SizedBox(
-                width: 30,
-                height: 30,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  value: _c.buttonProgress,
-                  color: _blue,
-                  backgroundColor: cs.onSurface.withValues(alpha: 0.12),
-                ),
-              ),
-            Icon(state == SyncButtonState.notLinked ? Icons.link_off_rounded : Icons.link_rounded,
-                size: building ? 16 : 20, color: lit ? accent : cs.onSurfaceVariant),
-            if (dot != null)
-              Transform.translate(
-                offset: const Offset(10, -9),
-                child: Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: dot,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Color.alphaBlend(fill, cs.surface), width: 2),
-                  ),
-                ),
-              ),
-          ]),
-        ),
-      ),
+    final (IconData icon, Color? color) = switch (state) {
+      SyncButtonState.inSync => (Icons.swap_horizontal_circle, widget.accent),
+      SyncButtonState.checkSync => (Icons.swap_horizontal_circle_outlined, widget.accent),
+      SyncButtonState.needsAttention => (Icons.swap_horizontal_circle, cs.error),
+      _ => (Icons.swap_horizontal_circle_outlined, null),
+    };
+    return IconButton(
+      tooltip: _c.buttonTooltip,
+      onPressed: () => showPositionSyncSheet(context, _c, widget.accent,
+          coverHeaders: context.read<LibraryProvider>().mediaHeaders, tint: widget.tint),
+      icon: SizedBox(width: 26, height: 26, child: Stack(alignment: Alignment.center, children: [
+        if (building)
+          CircularProgressIndicator(strokeWidth: 2.5, value: _c.buttonProgress, color: _blue,
+              backgroundColor: cs.onSurface.withValues(alpha: 0.12)),
+        Icon(icon, size: building ? 16 : 24, color: building ? null : color),
+      ])),
     );
   }
 }
@@ -213,7 +182,7 @@ VoidCallback? prefetchPositionSync(AuthProvider auth, LibraryProvider lib, Strin
 // ─── Sheet ──────────────────────────────────────────────────
 
 Future<void> showPositionSyncSheet(BuildContext context, PositionSyncController controller, Color accent,
-    {Map<String, String> coverHeaders = const {}}) {
+    {Map<String, String> coverHeaders = const {}, Color? tint}) {
   return showStackableSheet(
     context: context,
     useSafeArea: true,
@@ -224,6 +193,7 @@ Future<void> showPositionSyncSheet(BuildContext context, PositionSyncController 
       accent: accent,
       coverHeaders: coverHeaders,
       scrollController: sc,
+      tint: tint,
     ),
   );
 }
@@ -235,12 +205,14 @@ class _PositionSyncSheet extends StatefulWidget {
   final Color accent;
   final Map<String, String> coverHeaders;
   final ScrollController scrollController;
+  final Color? tint;
 
   const _PositionSyncSheet({
     required this.controller,
     required this.accent,
     required this.coverHeaders,
     required this.scrollController,
+    this.tint,
   });
 
   @override
@@ -299,9 +271,17 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final base = Theme.of(context).bottomSheetTheme.backgroundColor ?? cs.surface;
+    final tint = widget.tint;
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).bottomSheetTheme.backgroundColor ?? cs.surface,
+        color: base,
+        // The book page's own cover gradient, so the sheet reads as part of it.
+        gradient: tint == null ? null : LinearGradient(
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          stops: const [0.0, 0.4, 1.0],
+          colors: [Color.alphaBlend(tint.withValues(alpha: 0.5), base), Color.alphaBlend(tint.withValues(alpha: 0.12), base), base],
+        ),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: ListenableBuilder(

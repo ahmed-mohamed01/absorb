@@ -131,10 +131,10 @@ class ReadingLogList extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Flexible(
-                child: Text(
+                child: Text.rich(
                   reached.isEmpty
-                      ? 'no position'
-                      : '${percent(reached.first)} → ${percent(reached.last)}',
+                      ? const TextSpan(text: 'no position')
+                      : ReadingLogCard.arrowSpan(percent(reached.first), percent(reached.last), tt.labelMedium),
                   textAlign: TextAlign.right,
                   style: tt.labelMedium,
                 ),
@@ -292,10 +292,10 @@ class ReadingLogList extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  Text(
+                  Text.rich(
                     e.reached == null
-                        ? 'no position'
-                        : ReadingLogCard.change(e),
+                        ? const TextSpan(text: 'no position')
+                        : ReadingLogCard.changeSpan(e, tt.bodySmall?.copyWith(color: _changeColor)),
                     style: tt.bodySmall?.copyWith(
                       color: e.reached == null ? muted : _changeColor,
                     ),

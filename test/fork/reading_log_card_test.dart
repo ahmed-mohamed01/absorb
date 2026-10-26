@@ -55,8 +55,8 @@ void main() {
     ));
     await tester.pump();
     expect(tester.takeException(), isNull);
-    expect(find.text('+41.8% → 100%'), findsOneWidget);
-    expect(find.text('−87.1% → 4%'), findsOneWidget);
+    expect(find.text('+41.8% \uFFFC 100%', findRichText: true), findsOneWidget);
+    expect(find.text('−87.1% \uFFFC 4%', findRichText: true), findsOneWidget);
     expect(find.text('2h 22m'), findsOneWidget);
   });
 }

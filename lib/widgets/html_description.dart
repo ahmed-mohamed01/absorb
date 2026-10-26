@@ -17,6 +17,8 @@ import '../l10n/app_localizations.dart';
 /// toggle; null shows the whole thing with no toggle.
 class HtmlDescription extends StatefulWidget {
   final String html;
+  /// When set, the parent controls expansion and supplies the toggle.
+  final bool? expanded;
   final int? maxLines;
   final TextStyle? style;
   final Color? linkColor;
@@ -24,6 +26,7 @@ class HtmlDescription extends StatefulWidget {
   const HtmlDescription({
     super.key,
     required this.html,
+    this.expanded,
     this.maxLines = 4,
     this.style,
     this.linkColor,
@@ -48,6 +51,9 @@ class _HtmlDescriptionState extends State<HtmlDescription> {
     final textSpan = TextSpan(children: spans);
     final maxLines = widget.maxLines;
     if (maxLines == null) return Text.rich(textSpan);
+    if (widget.expanded != null) return Text.rich(textSpan,
+      maxLines: widget.expanded! ? null : maxLines,
+      overflow: widget.expanded! ? TextOverflow.clip : TextOverflow.ellipsis);
 
     return LayoutBuilder(builder: (context, constraints) {
       // Measure whether the text actually overflows at maxLines
