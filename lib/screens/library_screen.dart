@@ -46,6 +46,9 @@ import '../services/user_account_service.dart';
 import '../l10n/app_localizations.dart';
 import 'smart_scope_editor_screen.dart';
 import '../widgets/new_list_flow.dart';
+import '../services/fork/watchlist_info.dart';
+import '../widgets/fork/watchlist_sort_sheet.dart';
+import 'fork/watchlist_library_refresh.dart';
 
 /// Responsive grid column count based on available width and the cover size
 /// setting; scales up on tablets/iPads.
@@ -544,10 +547,12 @@ class LibraryScreenState extends State<LibraryScreen>
   }
 
   String? _lastLibraryId;
+  late final WatchlistLibraryRefresh _watchRefresh;
 
   @override
   void initState() {
     super.initState();
+    _watchRefresh = WatchlistLibraryRefresh(libraryId: () => context.read<LibraryProvider>().selectedLibraryId, reloadReleases: _refreshWatchlistInPlace, reloadAuthors: _onAuthorsChanged);
     _wasOffline = context.read<LibraryProvider>().isOffline;
     // Reveal driver is fed by NotificationListener at the screen level —
     // works across multiple per-tab scroll controllers in the IndexedStack
@@ -616,6 +621,7 @@ class LibraryScreenState extends State<LibraryScreen>
         _sortAuthors();
         if (total != null) _totalAuthors = total;
       });
+      _watchRefresh.authorsShown(_authors);
     });
   }
 
@@ -687,6 +693,7 @@ class LibraryScreenState extends State<LibraryScreen>
         lib.selectedLibraryId != null) {
       _lastLibraryId = lib.selectedLibraryId;
       _loadGeneration++;
+      _watchRefresh.reset();
       _loadBookRequests();
       // Cover shape and subtitles can differ per library.
       PlayerSettings.getRectangleCoversFor(lib.selectedLibraryId).then((v) {
@@ -956,6 +963,11 @@ class LibraryScreenState extends State<LibraryScreen>
         _sort = _podcastSort;
         _sortAsc = _podcastSortAsc;
       }
+      if (WatchlistInfo.isLibrary(lib.selectedLibraryId)) {
+        _sort = WatchlistSortChoice.librarySort;
+        _sortAsc = WatchlistSortChoice.asc;
+        _filter = LibraryFilter.none;
+      }
       // Restore last active tab (only for book libraries with tabs).
       const maxRestorableTab = 4;
       if (!isPodcast && savedTab > 0 && savedTab <= maxRestorableTab) {
@@ -1125,6 +1137,7 @@ class LibraryScreenState extends State<LibraryScreen>
     SocketService().removeAuthorsChangedListener(_onAuthorsChanged);
     SocketService().removeItemRemovedListener(_onItemRemoved);
     _authorsRefreshDebounce?.cancel();
+    _watchRefresh.dispose();
     _debounce?.cancel();
     _searchController.dispose();
     _focusNode.dispose();
@@ -1767,6 +1780,7 @@ class LibraryScreenState extends State<LibraryScreen>
       _isLoadingAuthors = false;
       _authorsLoaded = true;
     });
+    _watchRefresh.authorsShown(_authors);
   }
 
   void _sortAuthors() {
@@ -2357,7 +2371,7 @@ class LibraryScreenState extends State<LibraryScreen>
     // this replaces them once the index is built (instant on later searches).
     // Only override when the index actually built, so a failed fetch keeps the
     // server results instead of blanking them.
-    if (!isPodcast) {
+    if (!isPodcast && !WatchlistInfo.isLibrary(libId)) {
       await BookSearchIndex().ensureIndex(api, libId);
       if (mounted &&
           gen == _searchGen &&
@@ -2514,12 +2528,49 @@ class LibraryScreenState extends State<LibraryScreen>
     LibraryFilter.none => '',
   };
 
+  void _applyWatchlistSort() {
+    _loadGeneration++;
+    setState(() {
+      _sort = WatchlistSortChoice.librarySort;
+      _sortAsc = WatchlistSortChoice.asc;
+      _items.clear();
+      _page = 0;
+      _hasMore = true;
+      _isLoadingPage = false;
+    });
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    _loadPage();
+  }
+
+  // After a Watchlist write: the cards already loaded, read again and swapped
+  // in without leaving the user's place.
+  Future<void> _refreshWatchlistInPlace() async {
+    final lib = context.read<LibraryProvider>();
+    final api = context.read<AuthProvider>().apiService;
+    final gen = _loadGeneration;
+    final count = max(_loadedCount, 20);
+    if (_isLoadingPage || api == null || lib.selectedLibraryId == null) return;
+    final head = await watchlistReleasesHead(api, lib, lib.selectedLibraryId!, count);
+    if (!mounted || head == null || gen != _loadGeneration || _isLoadingPage) return;
+    setState(() {
+      _items..clear()..addAll(head.items);
+      _totalItems = head.total;
+      _loadedCount = head.items.length;
+      _page = max(_page, 1);
+      _hasMore = head.items.length == count && count < head.total;
+    });
+  }
+
   Future<void> _showSortFilterSheet(
     BuildContext context,
     ColorScheme cs,
     TextTheme tt, {
     int initialTab = 0,
   }) async {
+    if (WatchlistInfo.isLibrary(context.read<LibraryProvider>().selectedLibraryId)) {
+      if (_currentTab == 0) showWatchlistSortSheet(context, onChanged: _applyWatchlistSort);
+      return;
+    }
     final LibraryTab tab;
     final LibrarySort currentSort;
     final bool currentSortAsc;
@@ -3022,6 +3073,7 @@ class LibraryScreenState extends State<LibraryScreen>
     final canSelectItems =
         !lib.isOffline &&
         !_isInSearchMode &&
+        !WatchlistInfo.isLibrary(lib.selectedLibraryId) &&
         (canSelectAuthors ||
             (_tabController == null ? _podcastView == 0 : _currentTab == 0));
     final libraryName =
@@ -3327,6 +3379,8 @@ class LibraryScreenState extends State<LibraryScreen>
       l.libraryTabNarrators,
       'Lists',
     ];
+    final watchPills = WatchlistInfo.pills(context.read<LibraryProvider>().selectedLibraryId);
+    if (watchPills != null && !watchPills.any((p) => p.tab == _currentTab)) WidgetsBinding.instance.addPostFrameCallback((_) => _tabController?.animateTo(0));
     return Center(
       child: Padding(
         // Inset from the screen edges; the FittedBox below scales the whole
@@ -3348,8 +3402,10 @@ class LibraryScreenState extends State<LibraryScreen>
                 fit: BoxFit.scaleDown,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
-                  children: List.generate(labels.length, (i) {
-                    final active = _currentTab == i;
+                  children: List.generate(watchPills?.length ?? labels.length, (j) {
+                    final i = watchPills?[j].tab ?? j;
+                    final when = watchPills?[j].when;
+                    final active = _currentTab == i && (when == null || when == WatchlistReleaseFilter.when);
                     return GestureDetector(
                       onTap: () {
                         if (active) {
@@ -3359,7 +3415,12 @@ class LibraryScreenState extends State<LibraryScreen>
                             Theme.of(context).textTheme,
                           );
                         } else {
-                          _tabController?.animateTo(i);
+                          // Recent and Upcoming are the one releases tab, shown
+                          // two ways.
+                          final reload = when != null && when != WatchlistReleaseFilter.when;
+                          if (when != null) WatchlistReleaseFilter.when = when;
+                          if (_currentTab != i) _tabController?.animateTo(i);
+                          if (reload) _applyWatchlistSort();
                         }
                       },
                       child: AnimatedContainer(
@@ -3379,7 +3440,7 @@ class LibraryScreenState extends State<LibraryScreen>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              labels[i],
+                              watchPills?[j].label ?? labels[i],
                               maxLines: 1,
                               softWrap: false,
                               style: TextStyle(
@@ -3392,7 +3453,7 @@ class LibraryScreenState extends State<LibraryScreen>
                                     : cs.onSurfaceVariant,
                               ),
                             ),
-                            if (active) ...[
+                            if (active && (watchPills == null || when != null)) ...[
                               const SizedBox(width: 4),
                               Icon(
                                 Icons.sort_rounded,

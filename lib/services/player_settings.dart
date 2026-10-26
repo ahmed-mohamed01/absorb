@@ -207,6 +207,11 @@ class PlayerSettings {
   static Future<String> getBookmarkSort() => _get('bookmarkSort', 'newest');
   static Future<void> setBookmarkSort(String value) => _set('bookmarkSort', value);
 
+  /// Which formats a BookOrbit Watchlist "Request missing" asks for:
+  /// 'both' (default), 'ebook' or 'audiobook'.
+  static Future<String> getWatchlistRequestFormat() => _get('watchlistRequestFormat', 'both');
+  static Future<void> setWatchlistRequestFormat(String value) => _set('watchlistRequestFormat', value);
+
   // On-device bookmark transcription (Whisper, opt-in). Stored globally
   // (raw SharedPreferences, not per-account) because the downloaded Whisper
   // model is shared across every profile on the device.
@@ -1396,6 +1401,7 @@ class PlayerSettings {
     if ((item['mediaType'] as String?) == 'podcast') return false;
     // BookOrbit Book Dock files have no tracks until they are filed.
     if (item['bookDock'] != null) return false;
+    if (item['watchlist'] != null) return false;
     if (countNarration && NarratedBooks.contains(item['id'])) return false;
     final media = item['media'] as Map<String, dynamic>? ?? {};
     final duration = (media['duration'] as num?)?.toDouble() ?? 0;

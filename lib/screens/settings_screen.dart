@@ -63,6 +63,7 @@ import '../widgets/server_connection_editor.dart';
 import '../widgets/server_admin_status_badges.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/sign_in_again.dart';
+import '../widgets/fork/watchlist_settings.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -4698,6 +4699,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onTap: () => BookRequestsScreen.open(context, openList: true),
                       ),
                     ],
+                    const WatchlistSettingsTile(),
                     const Divider(height: 1, indent: 16, endIndent: 16),
                     ListTile(
                       leading: Icon(Icons.menu_book_rounded, color: cs.primary),

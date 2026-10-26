@@ -12,6 +12,8 @@ import '../services/download_service.dart';
 import 'absorbing_shared.dart';
 import 'book_detail_sheet.dart';
 import 'episode_list_sheet.dart';
+import 'fork/watchlist_cover_badges.dart';
+import '../services/fork/watchlist_info.dart';
 
 class BookCard extends StatelessWidget {
   final Map<String, dynamic> item;
@@ -408,6 +410,7 @@ class BookCard extends StatelessWidget {
                     ),
                   if (hasEbook && !selectionMode)
                     Positioned(top: 4, left: 4, child: EbookCoverBadge(readAlong: readAlong)),
+                  if (WatchlistInfo.of(item) != null) WatchlistCoverBadges(item: item),
                   if (isFinished || isDownloaded)
                     Positioned(
                       left: 0, right: 0, bottom: 0,

@@ -669,6 +669,7 @@ class AndroidAutoService {
         );
       }).where((l) => l.id.isNotEmpty &&
               l.id != ApiService.bookDockLibraryId &&
+              l.id != ApiService.watchlistLibraryId &&
               (l.isBook || l.isPodcast)).toList();
 
       // ── Personalized shelves merged from all libraries ──

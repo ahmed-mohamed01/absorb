@@ -146,7 +146,7 @@ mixin _StateMixin on ChangeNotifier {
 
   bool get canShowDashboard =>
       _api?.isBookOrbit == true &&
-      _libraries.where((l) => l is Map && l['mediaType'] != 'podcast' && l['bookDock'] != true).length > 1;
+      _libraries.where((l) => l is Map && l['mediaType'] != 'podcast' && l['bookDock'] != true && l['watchlist'] != true).length > 1;
   List<dynamic> get personalizedSections => _personalizedSections;
   List<dynamic> get series => _series;
   bool get isLoading => _isLoading;
@@ -401,7 +401,7 @@ mixin _StateMixin on ChangeNotifier {
   String? getCoverUrl(String? itemId, {int width = 400, double? coverRatio}) {
     if (itemId == null) return null;
 
-    final isCompositeKey = itemId.length > 36;
+    final isCompositeKey = itemId.length > 36 && !ApiService.isWatchlistItem(itemId);
     final apiItemId = isCompositeKey ? itemId.substring(0, 36) : itemId;
 
     if (_itemsWithoutCover.contains(apiItemId)) return null;

@@ -29,6 +29,7 @@ import 'books_sheet_shared.dart';
 import '../services/api_service.dart';
 import '../utils/duration_format.dart';
 import '../utils/series_number_match.dart';
+import 'fork/watchlist_series_actions.dart';
 
 /// Show a bottom sheet with all books in a series, sorted by sequence.
 /// Can be called from any screen.
@@ -1426,7 +1427,10 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
           }(),
           style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
         ),
-        if (_books.isNotEmpty) ...[
+        if (_books.isNotEmpty && isWatchlistSeriesId(widget.seriesId)) ...[
+          const SizedBox(height: 12),
+          WatchlistSeriesActions(books: _books, accent: accent, onChanged: _fetchFromApi),
+        ] else if (_books.isNotEmpty) ...[
           const SizedBox(height: 12),
           Row(children: [
             _stat(l.seriesFinishedOf(finishedCount, _totalBooks > 0 ? _totalBooks : _books.length), l.seriesStatsFinished, cs, tt),
@@ -1570,7 +1574,7 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
       padding: const EdgeInsets.only(bottom: 8),
       child: SwipeAction(
         key: ValueKey('absorb-$bookId'),
-        onStartToEnd: isOnAbsorbing
+        onStartToEnd: isOnAbsorbing || ApiService.isWatchlistItem(bookId)
             ? null
             : SwipeActionSpec(
                 icon: Icons.add_circle_outline_rounded,

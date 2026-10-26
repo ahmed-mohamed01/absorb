@@ -17,6 +17,10 @@ import 'episode_list_sheet.dart';
 import '../services/upcoming_releases_service.dart';
 import 'series_books_sheet.dart';
 import 'author_books_sheet.dart';
+import 'fork/watchlist_cover_badges.dart';
+import 'fork/watchlist_author_tiles.dart';
+import 'fork/watchlist_series_actions.dart';
+import '../services/fork/watchlist_info.dart';
 
 // ═══════════════════════════════════════════════════════════════
 // Grid book tile (cover + title + author)
@@ -219,6 +223,8 @@ class _GridBookTileState extends State<GridBookTile> {
                           style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600)),
                       ),
                     ),
+
+                  if (WatchlistInfo.of(widget.item) != null) WatchlistCoverBadges(item: widget.item),
 
                   // ── State badges (downloaded / finished) ──
                   if (isFinished || isDownloaded)
@@ -702,7 +708,7 @@ class GridSeriesTileDirect extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _StackedCovers(
+          watchlistSeriesCovers(seriesId, books, _StackedCovers(
             coverUrls: coverUrls,
             numBooks: numBooks,
             mediaHeaders: lib.mediaHeaders,
@@ -710,7 +716,7 @@ class GridSeriesTileDirect extends StatelessWidget {
             seriesProgress: seriesProgress,
             booksFinished: finished,
             coverAspectRatio: coverAspectRatio,
-          ),
+          )),
           const SizedBox(height: 5),
           Text(
             seriesName,
@@ -986,13 +992,14 @@ class GridAuthorTile extends StatelessWidget {
                         children: [
                           Icon(Icons.auto_stories_rounded, size: 11, color: cs.onPrimaryContainer),
                           const SizedBox(width: 3),
-                          Text('$numBooks',
+                          Text(watchlistAuthorBadge(author) ?? '$numBooks',
                             style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
                               color: cs.onPrimaryContainer)),
                         ],
                       ),
                     ),
                   ),
+                if (author['watchlist'] is Map) WatchlistAuthorOverlay(author: author),
                 if (isMatching)
                   Positioned.fill(
                     child: DecoratedBox(

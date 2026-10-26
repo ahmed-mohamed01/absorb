@@ -26,11 +26,13 @@ import '../models/auth_session.dart';
 import '../utils/server_url.dart';
 import '../utils/percent_escapes.dart';
 import 'fork/position_sync_chain.dart';
+import 'fork/watchlist_info.dart';
 
 part 'bookorbit_api_service.dart';
 part 'bookorbit_admin_api.dart';
 part 'fork/bookorbit_dashboard.dart';
 part 'fork/bookorbit_position_sync.dart';
+part 'fork/bookorbit_watchlist.dart';
 
 /// Outcome of a local-session upsert. [serverTooOld] flags a 404/501 (the
 /// server predates /api/session/local) so the caller can fall back to the
@@ -494,6 +496,8 @@ class ApiService {
   /// they can be edited, filed into a real library or removed, not played.
   static const bookDockLibraryId = 'book-dock';
   static bool isBookDockItem(String itemId) => itemId.startsWith('dock-');
+  static const watchlistLibraryId = 'watchlist';
+  static bool isWatchlistItem(String itemId) => itemId.startsWith('watch-');
 
   /// The library folders a dock file can be filed into; empty when this
   /// account may not add books to a library.

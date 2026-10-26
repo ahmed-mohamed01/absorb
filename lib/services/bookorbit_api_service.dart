@@ -166,6 +166,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     _narrations.clear();
     _narrationLoads.clear();
     _placedSpots.clear();
+    _watchlistClearCaches();
   }
 
   /// Names Absorb on the highlights and sessions it saves, on servers that
@@ -946,11 +947,13 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         if (n == 2) {
           final dock = await _dockLibrary();
           final libs = await _libraries();
-          return _json({'libraries': [...libs, if (dock != null) dock]});
+          final watch = await _watchlistLibrary();
+          return _json({'libraries': [...libs, if (watch != null) watch, if (dock != null) dock]});
         }
         final libId = at(2);
         if (libId == ApiService.bookDockLibraryId) return _routeDockLibrary(n, at(3), q);
         if (libId == dashboardLibraryId) return _routeDashboardLibrary(n, at(3), q);
+        if (libId == ApiService.watchlistLibraryId) return _routeWatchlistLibrary(n, at(3), q, at(4));
         if (n == 3) {
           final lib = (await _libraries()).firstWhere((l) => l['id'] == libId,
               orElse: () => const <String, dynamic>{});
@@ -960,6 +963,10 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
             out['filterdata'] = await _filterData(libId);
           }
           return _json(out);
+        }
+        // A Watchlist series opened while another library is selected.
+        if (_watchParseSeriesId(at(4)) != null || _ForkBookOrbitWatchlist._watchSeriesFilter(q['filter']) != null) {
+          return _routeWatchlistLibrary(n, at(3), q, at(4));
         }
         switch (at(3)) {
           case 'items':
@@ -994,6 +1001,10 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         return null;
       case 'authors':
         if (method == 'GET' && n == 3) {
+          if (at(2).startsWith(_watchAuthorPrefix)) {
+            final a = await _watchAuthorDetail(at(2));
+            return a == null ? _status(404, 'Author not found') : _json(a);
+          }
           final author = await _authorDetail(at(2), q);
           return author == null ? _status(404, 'Author not found') : _json(author);
         }
@@ -1023,6 +1034,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         if (n >= 3 && ApiService.isBookDockItem(at(2))) {
           return _routeDockItem(method, at(2), n == 4 ? at(3) : '', n, body);
         }
+        if (n >= 3 && ApiService.isWatchlistItem(at(2))) return _routeWatchlistItem(method, at(2), n);
         if (at(2) == 'batch' && at(3) == 'get' && method == 'POST') {
           final ids = (body['libraryItemIds'] as List<dynamic>? ?? const []).map((e) => '$e').toList();
           return _json({'libraryItems': await _itemsBatch(ids)});
@@ -1242,6 +1254,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
       return cached;
     }
     final raw = await _boGet('/libraries') as List<dynamic>;
+    _watchKeepLibraryRoots(raw);
     final libs = raw
         .whereType<Map<String, dynamic>>()
         .where((l) => l['type'] != 'podcasts')
@@ -1347,6 +1360,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
             if (ApiService.isBookDockItem(id)) {
               return BookOrbitMapper.dockItem(await _dockFile(_dockFileId(id)));
             }
+            if (ApiService.isWatchlistItem(id)) return _watchItemFor(id);
             final detail = await _detail(id);
             return BookOrbitMapper.item(detail: detail, manifest: _manifests[_key(id)]);
           } catch (_) {
@@ -2494,6 +2508,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   @override
   String getCoverUrl(String itemId, {int? width = 400, int? updatedAt, String? coverSlot, double? coverRatio}) {
     if (ApiService.isBookDockItem(itemId)) return _dockCoverUrl(_dockFileId(itemId));
+    if (ApiService.isWatchlistItem(itemId)) return _watchCoverUrl(itemId);
     final kind = coverSlot == null && width != null && width <= 400 ? 'thumbnail' : 'cover';
     final cv = _coverVersions[_key(itemId)];
     final t = cv == null ? '' : '&t=${Uri.encodeQueryComponent(cv)}';
@@ -2661,6 +2676,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
 
   @override
   String getAuthorImageUrl(String authorId, {int width = 200, int? updatedAt}) {
+    if (authorId.startsWith(_watchAuthorPrefix)) return _watchPortraitUrl(authorId);
     final id = int.tryParse(authorId) ?? 0;
     final kind = width <= 400 ? 'thumbnail' : 'image';
     final t = updatedAt == null ? '' : '?t=$updatedAt';

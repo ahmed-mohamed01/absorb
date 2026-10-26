@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../providers/library_provider.dart';
 import '../services/player_settings.dart';
+import 'fork/watchlist_picker_badge.dart';
 
 /// Bottom-sheet library switcher shared by the Home/Library headers and the
 /// bottom-nav long-press. When the dedicated Podcasts tab is enabled, its
@@ -89,12 +90,14 @@ Future<void> showLibraryPickerSheet(
                           ? Icons.dashboard_rounded
                           : library['bookDock'] == true
                           ? Icons.move_to_inbox_rounded
+                          : library['watchlist'] == true
+                          ? Icons.visibility_rounded
                           : mediaType == 'podcast'
                               ? Icons.podcasts_rounded
                               : Icons.auto_stories_rounded,
                       color: isSelected ? cs.primary : cs.onSurfaceVariant,
                     ),
-                    title: Text(name),
+                    title: watchlistPickerTitle(library, name) ?? Text(name),
                     trailing: isSelected
                         ? Icon(Icons.check_circle_rounded, color: cs.primary)
                         : null,

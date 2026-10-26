@@ -67,7 +67,11 @@ import 'fork/position_sync_sheet.dart';
 import 'ebook_router.dart';
 import '../utils/duration_format.dart';
 import '../utils/share_origin.dart';
+import '../services/fork/watchlist_info.dart';
+import 'fork/watchlist_cover_badges.dart';
+import '../screens/fork/watchlist_release_screen.dart';
 part 'fork/book_detail_fork.dart';
+part 'fork/watchlist_detail.dart';
 
 // ─── BOOK DETAIL BOTTOM SHEET ───────────────────────────────
 
@@ -424,7 +428,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
   void _warmStats() {
     final auth = context.read<AuthProvider>();
     final api = auth.apiService;
-    if (api == null) return;
+    if (api == null || ApiService.isWatchlistItem(widget.itemId)) return;
     unawaited(BookStatsService.instance
         .ensureLoaded(widget.itemId, api, isAdmin: auth.isAdmin));
   }
@@ -508,6 +512,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
             });
           }
           _deriveCoverScheme();
+          if (WatchlistInfo.of(finalItem) != null) return;
           if (api.isBookOrbit && !_similarLoaded && !ApiService.isBookDockItem(widget.itemId)) {
             _similarLoaded = true;
             unawaited(_loadSimilar(api));
@@ -726,7 +731,9 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                   )
                 : AnimatedOpacity(
                     opacity: 1.0, duration: const Duration(milliseconds: 300),
-                    child: BookDockInfo.of(_item) != null
+                    child: WatchlistInfo.of(_item) != null
+                        ? _buildWatchlistContent(context, cs, tt, l, WatchlistInfo.of(_item)!)
+                        : BookDockInfo.of(_item) != null
                         ? _buildDockContent(context, cs, tt, l, BookDockInfo.of(_item)!)
                         : widget.quick
                             ? _buildQuickContent(context, cs, tt, l)

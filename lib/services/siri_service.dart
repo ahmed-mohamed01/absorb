@@ -192,7 +192,7 @@ class SiriService {
     final libs = await api.getLibraries();
     return [
       for (final l in libs.whereType<Map<String, dynamic>>())
-        if (l['id'] is String)
+        if (l['id'] is String && l['id'] != ApiService.watchlistLibraryId)
           AutoLibraryEntry(
             id: l['id'] as String,
             name: l['name'] as String? ?? '',

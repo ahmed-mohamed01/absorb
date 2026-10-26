@@ -15,6 +15,9 @@ import 'library_grid_tiles.dart';
 import 'library_search_results.dart';
 import 'series_books_sheet.dart';
 import 'stackable_sheet.dart';
+import 'fork/watchlist_author_settings_sheet.dart';
+import 'fork/watchlist_series_actions.dart';
+import '../services/api_service.dart';
 
 /// Show a bottom sheet with author info and books.
 void showAuthorDetailSheet(BuildContext context, {
@@ -147,7 +150,7 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
     final lib = context.read<LibraryProvider>();
     final auth = context.watch<AuthProvider>();
     final headers = lib.mediaHeaders;
-    final canEdit = auth.canUpdateMetadata && !lib.isOffline;
+    final canEdit = (auth.canUpdateMetadata || isWatchlistAuthorId(widget.authorId)) && !lib.isOffline;
 
     if (_isLoading) {
       return Column(
@@ -501,7 +504,7 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
                 children: [
                   Text(section.label, style: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
-                  Text(l.authorBooksBookCount(bookCount),
+                  Text(watchlistSeriesCount(section.seriesId, section.books) ?? l.authorBooksBookCount(bookCount),
                     style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
                 ],
               )),
@@ -556,7 +559,7 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: SwipeAction(
         key: ValueKey('absorb-$bookId'),
-        onStartToEnd: isOnAbsorbing
+        onStartToEnd: isOnAbsorbing || ApiService.isWatchlistItem(bookId)
             ? null
             : SwipeActionSpec(
                 icon: Icons.add_circle_outline_rounded,
@@ -600,7 +603,7 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
             : _avatarPlaceholder(cs),
       ),
       title: _displayName,
-      subtitle: _books.isNotEmpty ? l.authorBooksBookCount(_books.length) : null,
+      subtitle: watchlistAuthorSubtitle(widget.authorId, _books) ?? (_books.isNotEmpty ? l.authorBooksBookCount(_books.length) : null),
       trailing: canEdit
           ? IconButton(
               icon: Icon(Icons.edit_rounded, size: 20, color: cs.onSurfaceVariant),
@@ -612,6 +615,14 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
   }
 
   void _openEditAuthor() {
+    if (isWatchlistAuthorId(widget.authorId)) {
+      showWatchlistAuthorSettingsSheet(context, authorId: widget.authorId, name: _displayName, onChanged: () {
+        if (mounted) _loadAuthorAndBooks();
+      }, onUnfollowed: () {
+        if (mounted) Navigator.of(context).pop();
+      });
+      return;
+    }
     showEditAuthorSheet(
       context,
       authorId: widget.authorId,

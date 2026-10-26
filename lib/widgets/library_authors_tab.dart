@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../screens/library_screen.dart';
 import 'library_grid_tiles.dart';
+import 'fork/watchlist_author_tiles.dart';
 
 class LibraryAuthorsTab extends StatelessWidget {
   final List<Map<String, dynamic>> authors;
@@ -44,6 +45,7 @@ class LibraryAuthorsTab extends StatelessWidget {
     final l = AppLocalizations.of(context)!;
 
     final headers = <Widget>[if (headerSliver != null) headerSliver!];
+    final watchAdd = watchlistAddAuthorSlots(context);
 
     Widget body;
     if (isLoadingAuthors && authors.isEmpty) {
@@ -58,7 +60,7 @@ class LibraryAuthorsTab extends StatelessWidget {
           ),
         ],
       );
-    } else if (authors.isEmpty && authorsLoaded) {
+    } else if (authors.isEmpty && authorsLoaded && watchAdd == 0) {
       body = CustomScrollView(
         controller: scrollController,
         physics: const AlwaysScrollableScrollPhysics(),
@@ -114,6 +116,8 @@ class LibraryAuthorsTab extends StatelessWidget {
               ),
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
+                  if (index < watchAdd) return const WatchlistAddAuthorTile();
+                  index -= watchAdd;
                   maybeLoadAhead(index);
                   if (index >= authors.length) {
                     return const Center(
@@ -130,12 +134,12 @@ class LibraryAuthorsTab extends StatelessWidget {
                     selectionMode: selectionMode,
                     isSelected: selectedAuthorIds.contains(authorId),
                     isMatching: matchingAuthorId == authorId,
-                    onSelectionToggle: onSelectionToggle == null
+                    onSelectionToggle: onSelectionToggle == null || author['watchlist'] is Map
                         ? null
                         : () => onSelectionToggle!(author, index),
                   );
                 },
-                childCount: authors.length + (hasMore ? 1 : 0),
+                childCount: watchAdd + authors.length + (hasMore ? 1 : 0),
               ),
             ),
           ),
