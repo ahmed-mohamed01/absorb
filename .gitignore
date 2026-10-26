@@ -62,7 +62,8 @@ android/key.properties
 *.sh
 
 # Tests (local only)
-/test/
+/test/*
+!/test/fork/
 
 # Battery profiling output
 /battery-reports/

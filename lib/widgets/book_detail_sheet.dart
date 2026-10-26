@@ -63,6 +63,7 @@ import 'collection_picker_sheet.dart';
 import 'delete_confirm_dialog.dart';
 import 'absorb_wave_icon.dart';
 import 'stackable_sheet.dart';
+import 'fork/position_sync_sheet.dart';
 import 'ebook_router.dart';
 import '../utils/duration_format.dart';
 import '../utils/share_origin.dart';
@@ -907,7 +908,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
       ),
       // With the automatic sync off, an audiobook and its separate EPUB come
       // together by hand: whichever is behind moves up to the other.
-      if (!_autoSync &&
+      if (!auth.isBookOrbit && !_autoSync &&
           _transcriptionReady &&
           !isEbookOnly &&
           ebookFile != null &&

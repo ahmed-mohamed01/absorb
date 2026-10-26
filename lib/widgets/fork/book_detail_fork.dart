@@ -437,6 +437,14 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
             () => isFinished ? _markNotFinished(context, auth, currentTime, duration) : _markFinished(context, auth, duration),
             color: isFinished ? Colors.green : null,
             tooltip: isFinished ? Wording.of(context).fullyAbsorbed : Wording.of(context).fullyAbsorbAction)),
+        // Takes its own slot and gap, and gives them up for a book with
+        // nothing to link.
+        if (ForkSyncButton.shouldShow(auth, lib, widget.itemId))
+          ForkSyncButton(
+            key: ValueKey('fork-sync-${widget.itemId}'),
+            itemId: widget.itemId, accent: accent, api: auth.apiService as BookOrbitApiService,
+            title: title, authorName: authorName,
+          ),
         const SizedBox(width: 8),
         Expanded(child: _iconAction(cs, Icons.more_horiz_rounded,
             () => _showMoreSheet(context, auth, lib, title, authorName, progress, isFinished, duration, ebookFile, isEbookOnly),
