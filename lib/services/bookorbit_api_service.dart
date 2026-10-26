@@ -4720,6 +4720,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         if (source != null) 'source': source,
         ...await _clientName(),
       });
+      await _rememberSessionDevice(itemId, _iso(startedAt));
       return true;
     } catch (e) {
       debugPrint('[BookOrbit] reading time for $itemId not logged: $e');
@@ -5070,6 +5071,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         'web' => 'BookOrbit web',
         'koreader' => 'KOReader',
         'kobo' => 'Kobo',
+        'audiobookshelf' => 'Audiobookshelf',
         'manual' => 'Manual entry',
         _ => 'BookOrbit',
       };
@@ -5736,18 +5738,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     try {
       manifest = await _manifest(bookId);
     } catch (_) {}
-    // A narrated EPUB with no audiobook: reading and listening both happen in
-    // the one file, so every session on it is this book's, timed against the
-    // narration.
-    Map? narration;
-    if (manifest == null) {
-      try {
-        narration = (BookOrbitMapper.item(detail: await _detail(bookId))['media'] as Map)['narration'] as Map?;
-      } catch (_) {}
-    }
-    final bookSeconds = manifest != null
-        ? BookOrbitMapper.totalSeconds(manifest)
-        : ((narration?['duration'] as num?)?.toDouble() ?? 0.0);
+    final bookSeconds = await _forkReadingLogPrepare(bookId, res, manifest == null ? 0.0 : BookOrbitMapper.totalSeconds(manifest));
     // Session rows carry the book's own title and author, as Audiobookshelf's do.
     final book = manifest?['book'] as Map?;
     var title = book?['title'] as String?;
@@ -5765,22 +5756,15 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     final mine = await _sessionDevices();
     final sessions = (res['items'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
-        // Reading the ebook of the same book is not listening, unless the
-        // ebook is what reads it aloud.
-        .where((s) =>
-            narration != null ||
-            s['format'] == null ||
-            s['sessionType'] == 'listen' ||
-            BookOrbitMapper.isAudioFormat(s['format'] as String?))
         .map((s) {
       final started = DateTime.tryParse(s['startedAt'] as String? ?? '')?.toLocal();
       final endPct = (s['endProgress'] as num?)?.toDouble();
       final deltaPct = (s['progressDelta'] as num?)?.toDouble();
-      final endAt = endPct != null && bookSeconds > 0 ? endPct / 100 * bookSeconds : null;
+      final endAt = _forkHasPosition(s) && endPct != null && bookSeconds > 0 ? endPct / 100 * bookSeconds : null;
       final startAt = endAt != null && deltaPct != null
           ? ((endPct! - deltaPct) / 100 * bookSeconds).clamp(0.0, bookSeconds)
           : endAt;
-      final ownDevice = mine['$bookId@${s['startedAt']}'];
+      final ownDevice = _forkOwnDevice(mine, s['startedAt']);
       return {
         'id': 'bo-session-${s['id']}',
         'libraryItemId': bookId,
@@ -5803,6 +5787,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
             : '${started.year}-${started.month.toString().padLeft(2, '0')}-${started.day.toString().padLeft(2, '0')}',
         'deviceInfo': ownDevice ?? {'clientName': _sourceLabel(s['source'])},
         'mediaPlayer': s['source'] ?? 'web',
+        ..._forkReadingLogFields(s, ownDevice != null),
       };
     }).toList();
     return {

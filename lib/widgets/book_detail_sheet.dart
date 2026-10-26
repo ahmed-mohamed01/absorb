@@ -64,6 +64,7 @@ import 'delete_confirm_dialog.dart';
 import 'absorb_wave_icon.dart';
 import 'stackable_sheet.dart';
 import 'fork/position_sync_sheet.dart';
+import 'fork/reading_log_card.dart';
 import 'ebook_router.dart';
 import '../utils/duration_format.dart';
 import '../utils/share_origin.dart';
@@ -967,7 +968,10 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
         showPreview: showPreview, chapters: chapters, duration: duration, progress: progress,
         isFinished: isFinished, currentTime: currentTime,
       ),
-      if (!lib.isOffline && !isEbookOnly) ...[
+      if (bookOrbitOnline) ...[
+        const SizedBox(height: 16),
+        ReadingLogCard(itemId: widget.itemId, accent: accent),
+      ] else if (!lib.isOffline && !isEbookOnly) ...[
         const SizedBox(height: 16),
         _listeningStatsBlock(context, cs, tt, accent, title),
       ],
