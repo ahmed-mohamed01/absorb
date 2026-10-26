@@ -169,11 +169,13 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
 
     // BookOrbit's picks can include this very book and its other editions
     // (same title, another id), and several editions of one pick: each title
-    // shows once, and never this book's.
-    final seenTitles = {title.trim().toLowerCase()};
+    // shows once, and never this book's. Titles compare without a subtitle,
+    // since one edition may carry ": A LitRPG Adventure" and another not.
+    String titleKey(Object? t) => '${t ?? ''}'.split(':').first.trim().toLowerCase();
+    final seenTitles = {titleKey(title)};
     final similar = [
       for (final b in _similar)
-        if (b['id'] != widget.itemId && seenTitles.add('${b['title'] ?? ''}'.trim().toLowerCase())) b,
+        if (b['id'] != widget.itemId && seenTitles.add(titleKey(b['title']))) b,
     ];
     final similarReady = similar.isNotEmpty && !lib.isOffline;
     // An audiobook always gets every tab, an empty one saying so, so the
@@ -783,7 +785,11 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   /// lit, the ones behind you fold into one row.
   Widget _forkChapterList(BuildContext context, ColorScheme cs, TextTheme tt, Color accent, AuthProvider auth,
       List<dynamic> chapters, double currentTime, String title, String authorName, double duration) {
-    return ListenableBuilder(
+    // The chapter rows are ListTiles with a highlight colour; they need a
+    // Material right behind them, or the sheet's own coloured backing sits
+    // in between and Flutter asserts that their colour and splashes may not
+    // show (once per row, every frame).
+    return Material(type: MaterialType.transparency, child: ListenableBuilder(
       listenable: AudioPlayerService(),
       builder: (context, _) {
         final player = AudioPlayerService();
@@ -829,7 +835,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
             _chapterRow(context, cs, tt, accent, auth, chapters, i, pos, isActive, title, authorName, duration),
         ]);
       },
-    );
+    ));
   }
 
   Widget _forkSimilarTile(ColorScheme cs, TextTheme tt, LibraryProvider lib, AuthProvider auth, Map<String, dynamic> book, double width) {
