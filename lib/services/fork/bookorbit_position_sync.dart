@@ -512,7 +512,8 @@ extension ForkPositionSyncApi on BookOrbitApiService {
       _ps(() async => PositionSyncBookInfo.fromDetail(await _detail('$bookId')));
 
   Future<PositionSyncPermissions> positionSyncPermissions() async => PositionSyncPermissions(
-        editLink: await _can('library_edit_metadata'),
+        // One /auth/me per ten minutes, not one per sheet (bookorbit_perf.dart).
+        editLink: await _forkLoadPermissions().then((_) => _can('library_edit_metadata')),
         generate: await _can('library_upload'),
         rebuild: await _can('library_delete_books'),
         abs: await _can('audiobookshelf_sync'),

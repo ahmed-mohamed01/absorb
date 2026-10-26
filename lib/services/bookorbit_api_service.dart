@@ -790,7 +790,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   }
 
   Future<dynamic> _boGet(String path, [Map<String, dynamic>? query, Duration timeout = _timeout]) async =>
-      _decode(await super._authGet(_boUri(path, query), timeout: timeout));
+      _forkGet(path, query, timeout);
 
   Future<dynamic> _boPost(String path, [Object? body, Duration timeout = _timeout]) async =>
       _decode(await super._authPost(
@@ -1344,6 +1344,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   }
 
   Future<Map<String, dynamic>> _item(String bookId, {bool withProgress = false}) async {
+    _forkWarmItem(bookId, withProgress: withProgress);
     final detail = await _detail(bookId, fresh: true);
     final manifest = _detailHasAudio(detail) ? await _manifest(bookId) : null;
     final item = _forkWithFrame(BookOrbitMapper.item(detail: detail, manifest: manifest), detail['coverAspectRatio']);
@@ -1645,6 +1646,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   }
 
   Future<List<Map<String, dynamic>>> _shelfCards(String type, int limit) async {
+    if (_forkShelfCache) return _forkShelfCards(type, limit);
     final res = await _boGet('/dashboard/scrollers/$type', {'limit': limit.clamp(1, 50)}) as Map<String, dynamic>;
     return (res['books'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>().toList();
   }
@@ -4193,6 +4195,8 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   /// The progress of a book read aloud from its EPUB: its place is kept on
   /// the EPUB file, not as an audiobook. Null for any other book.
   Future<Map<String, dynamic>?> _narrationProgress(String id, Map<String, dynamic>? card) async {
+    final cheap = await _forkNarrationProgress(id, card);
+    if (cheap != null) return cheap;
     final n = await _narration(id);
     if (n == null) return null;
     final spot = await _narrationPosition(id, n.fileId);

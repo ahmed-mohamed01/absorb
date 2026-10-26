@@ -366,6 +366,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     super.initState();
     // Quick-actions sheet seeds from the tile's item map so it paints instantly
     // instead of flashing a spinner; _loadItem still runs to refine overrides.
+    _forkSeedItem();
     if (widget.initialItem != null) {
       _item = widget.initialItem;
       _isLoading = false;
@@ -620,12 +621,13 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
       return;
     }
 
+    _forkSeedFailed();
     if (mounted) setState(() => _isLoading = false);
   }
 
   void _deriveCoverScheme() {
     try {
-    final url = _coverUrl;
+    final url = _forkPaletteUrl ?? _coverUrl;
     if (url == null) {
       debugPrint('[BookDetail] _deriveCoverScheme skipped (no cover url)');
       return;
@@ -722,7 +724,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 child: SizedBox(
                   height: MediaQuery.of(context).size.height * 0.85,
-                  child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: cs.onSurface.withValues(alpha: 0.24))),
+                  child: _forkLoadingBody(cs),
                 ),
               )
             : _item == null

@@ -149,6 +149,7 @@ class WatchlistChanges {
 }
 
 void _watchlistClearCaches() {
+  _forkPerfClearCaches();
   _watchMerged.clear();
   _watchMergedInFlight.clear();
   _watchLastMerge.clear();

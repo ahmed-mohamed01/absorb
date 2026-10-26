@@ -18,6 +18,9 @@ SvgNetworkLoader _forkProviderIconLoader(String url, Map<String, String> headers
 /// Releases the sync state each open sheet started loading, run when it closes.
 final _forkSyncPrefetch = Expando<VoidCallback>();
 
+/// The item each open sheet was seeded with, until `_loadItem` replaces it.
+final _forkSeeds = Expando<Map<String, dynamic>>();
+
 extension _ForkBookDetail on _BookDetailSheetContentState {
   void _forkPrefetchSync() {
     final release = prefetchPositionSync(context.read<AuthProvider>(), context.read<LibraryProvider>(), widget.itemId);
@@ -25,6 +28,96 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
   }
 
   void _forkReleaseSync() => _forkSyncPrefetch[this]?.call();
+
+  /// Paints the sheet at once from what the app already holds for this book
+  /// (its full detail if any Home card fetched it, else the last card built
+  /// for it); `_loadItem` then refreshes it behind. BookOrbit only, and not
+  /// offline, where `_loadItem` only has the downloads to answer from.
+  void _forkSeedItem() {
+    if (widget.initialItem != null || _item != null) return;
+    final bookOrbit = context.read<AuthProvider>().isBookOrbit;
+    final offline = context.read<LibraryProvider>().isOffline;
+    if (!bookOrbit || offline) {
+      if (forkTraceRequests) debugPrint('[BookDetail] no seed for ${widget.itemId}: bookOrbit=$bookOrbit offline=$offline');
+      return;
+    }
+    final seed = forkCachedBookOrbitItem(widget.itemId);
+    if (seed == null) return;
+    _item = seed;
+    _isLoading = false;
+    _forkSeeds[this] = seed;
+    debugPrint('[BookDetail] sheet seeded from cache item=${widget.itemId}');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _deriveCoverScheme();
+    });
+  }
+
+  /// `_loadItem` found nothing (server unreachable, book gone, no download):
+  /// a seed it never replaced comes down, so the sheet shows the failure
+  /// instead of a stale book with dead buttons.
+  void _forkSeedFailed() {
+    final seed = _forkSeeds[this];
+    if (seed == null || !identical(_item, seed) || !mounted) return;
+    _forkSeeds[this] = null;
+    setState(() => _item = null);
+  }
+
+  /// The card's thumbnail URL on BookOrbit (already in the image cache from
+  /// the shelf), which gives the same accent as the full cover and shows at
+  /// once under the header cover while that one loads.
+  String? get _forkPaletteUrl {
+    if (!context.read<AuthProvider>().isBookOrbit) return null;
+    if ((_item?['_localCoverUrl'] as String?)?.isNotEmpty ?? false) return null;
+    final coverPath = (_item?['media'] as Map?)?['coverPath'] as String?;
+    if (coverPath == null || coverPath.isEmpty) return null;
+    return context.read<LibraryProvider>().getCoverUrl(widget.itemId, coverRatio: _itemFrame);
+  }
+
+  Widget _forkCoverPlaceholder(LibraryProvider lib) {
+    final url = _forkPaletteUrl;
+    if (url == null) return const SizedBox();
+    return CachedNetworkImage(
+      imageUrl: url, fit: BoxFit.contain,
+      httpHeaders: lib.mediaHeaders,
+      placeholder: (_, __) => const SizedBox(),
+      errorWidget: (_, __, ___) => const SizedBox(),
+    );
+  }
+
+  /// A skeleton in the layout's own shape for the opens nothing is cached
+  /// for, so the content lands in place instead of replacing a spinner.
+  Widget _forkLoadingBody(ColorScheme cs) {
+    final tone = cs.onSurface.withValues(alpha: 0.06);
+    Widget box(double w, double h, {double r = 8}) => Container(
+          width: w, height: h,
+          decoration: BoxDecoration(color: tone, borderRadius: BorderRadius.circular(r)),
+        );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          box(_squareCovers ? 170 : 170 * 2 / 3, 170, r: 12),
+          const SizedBox(width: 16),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const SizedBox(height: 6),
+            box(double.infinity, 22),
+            const SizedBox(height: 10),
+            box(140, 16),
+            const SizedBox(height: 18),
+            box(100, 14),
+            const SizedBox(height: 8),
+            box(120, 14),
+          ])),
+        ]),
+        const SizedBox(height: 20),
+        box(double.infinity, 52, r: 16),
+        const SizedBox(height: 12),
+        box(double.infinity, 44, r: 16),
+        const SizedBox(height: 24),
+        for (final w in [double.infinity, double.infinity, 220.0]) ...[box(w, 14), const SizedBox(height: 8)],
+      ]),
+    );
+  }
 
   ({Widget primary, Widget? secondary}) _forkActionButtons({
     required BuildContext context,
@@ -324,14 +417,14 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
                         child: CachedNetworkImage(
                           imageUrl: _coverUrl!, fit: BoxFit.contain,
                           httpHeaders: lib.mediaHeaders,
-                          placeholder: (_, __) => const SizedBox(),
+                          placeholder: (_, __) => _forkCoverPlaceholder(lib),
                           errorWidget: (_, __, ___) => const SizedBox(),
                         ),
                       ))
                 : CachedNetworkImage(
                     imageUrl: _coverUrl!, fit: BoxFit.contain,
                     httpHeaders: lib.mediaHeaders,
-                    placeholder: (_, __) => const SizedBox(),
+                    placeholder: (_, __) => _forkCoverPlaceholder(lib),
                     errorWidget: (_, __, ___) => const SizedBox(),
                   ),
           ),

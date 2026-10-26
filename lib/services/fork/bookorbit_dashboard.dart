@@ -11,6 +11,9 @@ Map<String, dynamic> _forkWithFrame(Map<String, dynamic> item, Object? frame) {
   if (frame is String && item['media'] is Map) {
     (item['media'] as Map)['coverAspectRatio'] = frame == '1/1' ? 1.0 : 2 / 3;
   }
+  // Every card and detail item passes through here: keep the last one per
+  // book for the detail sheet to paint from (bookorbit_perf.dart).
+  _forkRememberItem(item);
   return item;
 }
 

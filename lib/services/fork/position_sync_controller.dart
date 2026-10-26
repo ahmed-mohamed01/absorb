@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../api_service.dart';
+import 'perf_caches.dart';
 import 'position_sync_chain.dart';
 
 // Fork-owned: loads, polls and acts on one BookOrbit book's position sync,
@@ -28,6 +29,7 @@ enum ReadAlongBuildOutcome { started, ready, blocked, failed }
 class _Entry {
   final PositionSyncController controller;
   int refs = 0;
+  Timer? disposeTimer;
   _Entry(this.controller);
 }
 
@@ -54,21 +56,83 @@ class PositionSyncController extends ChangeNotifier {
   /// The shared controller for [bookId]; every acquire needs a [release].
   /// [api] replaces the one held, since the auth provider hands out a fresh
   /// service on every read.
+  static bool _listensForClears = false;
+
   static PositionSyncController acquire(BookOrbitApiService api, int bookId) {
+    if (!_listensForClears) {
+      _listensForClears = true;
+      ForkCacheClears.listen(disposeIdle);
+    }
     final entry = _registry.putIfAbsent(bookId, () => _Entry(PositionSyncController._(api, bookId)));
-    entry.controller.api = api;
+    final c = entry.controller;
+    c.api = api;
     entry.refs++;
-    return entry.controller;
+    entry.disposeTimer?.cancel();
+    entry.disposeTimer = null;
+    // A sheet reopened within the grace period shows the state it had, reads
+    // the link again behind it and picks its build polling back up.
+    if (entry.refs == 1 && c._parked) {
+      c._parked = false;
+      if (c.loaded) {
+        unawaited(c.load());
+        if (c.link != null) unawaited(c._fetchBuildStatuses());
+      }
+    }
+    return c;
   }
 
+  /// How long a released controller is kept for the next open of its book.
+  /// Settable so tests can run it in milliseconds.
+  static Duration releaseGrace = const Duration(seconds: 90);
+
+  /// Parks the controller while no sheet shows it: its polling stops, and it
+  /// is disposed after [releaseGrace] unless acquired again.
   static void release(PositionSyncController c) {
     final entry = _registry[c.bookId];
     if (entry == null || !identical(entry.controller, c)) return;
     entry.refs--;
     if (entry.refs > 0) return;
-    _registry.remove(c.bookId);
-    c.dispose();
+    c._parked = true;
+    c._alTimer?.cancel();
+    c._alTimer = null;
+    c._raTimer?.cancel();
+    c._raTimer = null;
+    c._searchTimer?.cancel();
+    c._searchTimer = null;
+    entry.disposeTimer?.cancel();
+    entry.disposeTimer = Timer(releaseGrace, () {
+      if (!identical(_registry[c.bookId], entry) || entry.refs > 0) return;
+      _registry.remove(c.bookId);
+      c.dispose();
+    });
   }
+
+  /// Drops every parked controller now (sign-out, account switch): the next
+  /// open starts from nothing instead of another server's book with this id.
+  static void disposeIdle() {
+    for (final id in _registry.keys.toList()) {
+      final entry = _registry[id]!;
+      if (entry.refs > 0) continue;
+      entry.disposeTimer?.cancel();
+      _registry.remove(id);
+      entry.controller.dispose();
+    }
+  }
+
+  @visibleForTesting
+  static bool retainedForTest(int bookId) => _registry.containsKey(bookId);
+
+  @visibleForTesting
+  bool get parkedForTest => _parked;
+
+  @visibleForTesting
+  bool get pollingForTest => _alTimer != null || _raTimer != null;
+
+  @visibleForTesting
+  bool get disposedForTest => _disposed;
+
+  /// Set while no sheet holds the controller: no polling is scheduled.
+  bool _parked = false;
 
   BookOrbitApiService api;
   final int bookId;
@@ -603,7 +667,7 @@ class PositionSyncController extends ChangeNotifier {
   void _alSchedule(int bookId) {
     _alTimer?.cancel();
     _alTimer = null;
-    if (!_alignmentRunning(alignment.status)) return;
+    if (_parked || !_alignmentRunning(alignment.status)) return;
     _alTimer = Timer(_alignmentPoll, () {
       _alTimer = null;
       unawaited(_alFetch(bookId));
@@ -745,7 +809,7 @@ class PositionSyncController extends ChangeNotifier {
   void _raSchedule(int bookId) {
     _raTimer?.cancel();
     _raTimer = null;
-    if (_disposed || !_readAlongInFlight(readAlong.status)) return;
+    if (_disposed || _parked || !_readAlongInFlight(readAlong.status)) return;
     _raTimer = Timer(_readAlongPoll, () {
       _raTimer = null;
       unawaited(_raFetch(bookId));
