@@ -63,6 +63,11 @@ String _formatBytes(int bytes) {
   return '${(bytes / 1024).ceil()} KB';
 }
 
+/// Where a connector row's switch sits: the row's 6 px top padding plus half
+/// its 44 px switch box; the rail leaves the 32 px track and a few px clear.
+const double _switchCenter = 6 + 44 / 2;
+const double _railGapHalf = 18;
+
 // ─── Button ─────────────────────────────────────────────────
 
 /// The detail icon row's Position sync button. It takes its own slot in the
@@ -192,6 +197,17 @@ class _ForkSyncButtonState extends State<ForkSyncButton> {
       ),
     );
   }
+}
+
+/// Starts a book's sync state loading as its detail sheet opens, beside the
+/// book itself, so the button's status arrives with the rest of the sheet.
+/// Call the returned release when the sheet closes.
+VoidCallback? prefetchPositionSync(AuthProvider auth, LibraryProvider lib, String itemId) {
+  if (!ForkSyncButton.shouldShow(auth, lib, itemId)) return null;
+  final c = PositionSyncController.acquire(auth.apiService as BookOrbitApiService, int.parse(itemId));
+  // After the frame, as the button does: loading notifies.
+  WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(c.loadInitial()));
+  return () => PositionSyncController.release(c);
 }
 
 // ─── Sheet ──────────────────────────────────────────────────
@@ -601,18 +617,42 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     final busy = _c.busy;
     final off = r.state == ConnectorState.available;
     final explained = _explained.contains(r.key);
+    // Like BookOrbit's: the switch takes the row's tone (green only for a
+    // working link, grey with a ban for one that can't sync) and its icon.
+    final (switchTone, thumbIcon) = switch (r.tone) {
+      ChainTone.success => (tone, Icons.link_rounded),
+      ChainTone.info => (tone, Icons.sync_rounded),
+      ChainTone.warning => (tone, Icons.priority_high_rounded),
+      ChainTone.destructive => (tone, Icons.close_rounded),
+      ChainTone.muted => (cs.outline, Icons.block_rounded),
+    };
+    final onTone = ThemeData.estimateBrightnessForColor(switchTone) == Brightness.dark ? Colors.white : Colors.black;
+    bool selected(Set<WidgetState> s) => s.contains(WidgetState.selected);
     Widget switchArea = SizedBox(
       width: 60,
       height: 44,
       child: toggle == null
           ? null
           : Center(
-              child: Switch(
-                value: toggle.on,
-                onChanged: toggle.disabled || busy ? null : (v) => _onSwitch(r, v),
-                materialTapTargetSize: MaterialTapTargetSize.padded,
-                activeThumbColor: _accent,
-                activeTrackColor: _accent.withValues(alpha: 0.45),
+              // Colours are pinned so a running action, which disables every
+              // switch for a moment, doesn't grey them all; only a link this
+              // reader can't change is dimmed.
+              child: Opacity(
+                opacity: toggle.disabled ? 0.5 : 1,
+                child: Switch(
+                  value: toggle.on,
+                  onChanged: toggle.disabled || busy ? null : (v) => _onSwitch(r, v),
+                  materialTapTargetSize: MaterialTapTargetSize.padded,
+                  trackColor: WidgetStateProperty.resolveWith(
+                      (s) => selected(s) ? switchTone : cs.surfaceContainerHighest),
+                  trackOutlineColor: WidgetStateProperty.resolveWith(
+                      (s) => selected(s) ? Colors.transparent : cs.outline),
+                  thumbColor: WidgetStateProperty.resolveWith(
+                      (s) => selected(s) ? onTone.withValues(alpha: 0.85) : cs.outline),
+                  thumbIcon: WidgetStateProperty.resolveWith((s) => selected(s)
+                      ? Icon(thumbIcon, color: switchTone)
+                      : Icon(Icons.link_off_rounded, color: cs.surfaceContainerHighest)),
+                ),
               ),
             ),
     );
@@ -636,16 +676,23 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     final content = Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Row(children: [
+        // Top-aligned so the switch sits at a fixed height the rail can skip.
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           switchArea,
           const SizedBox(width: 10),
           Expanded(
-            child: Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
-              Text(_connectorLabel(r),
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: off ? muted : cs.onSurface)),
-              // An off switch says why it is off; a live one says how it is.
-              _tag(off ? (r.qualifier ?? r.pill) : r.pill, tone),
-            ]),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 44),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                  Text(_connectorLabel(r),
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: off ? muted : cs.onSurface)),
+                  // An off switch says why it is off; a live one says how it is.
+                  _tag(off ? (r.qualifier ?? r.pill) : r.pill, tone),
+                ]),
+              ),
+            ),
           ),
           if (r.explainer != null)
             IconButton(
@@ -678,11 +725,7 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
       ]),
     );
     // The rail joins the cards above and below through the switch.
-    final railColor = r.tone == ChainTone.success || r.tone == ChainTone.info
-        ? _accent.withValues(alpha: 0.7)
-        : r.tone == ChainTone.muted
-            ? cs.onSurface.withValues(alpha: 0.22)
-            : tone.withValues(alpha: 0.7);
+    final railColor = r.tone == ChainTone.muted ? cs.onSurface.withValues(alpha: 0.22) : tone.withValues(alpha: 0.7);
     return Stack(children: [
       Positioned(
         left: 29,
@@ -690,7 +733,9 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         bottom: 0,
         child: CustomPaint(
           size: const Size(2, double.infinity),
-          painter: _RailPainter(railColor, dashed: r.tone == ChainTone.muted || r.tone == ChainTone.destructive),
+          painter: _RailPainter(railColor,
+              dashed: r.tone == ChainTone.muted || r.tone == ChainTone.destructive,
+              gap: toggle == null ? null : (_switchCenter - _railGapHalf, _switchCenter + _railGapHalf)),
         ),
       ),
       content,
@@ -1425,7 +1470,10 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
 class _RailPainter extends CustomPainter {
   final Color color;
   final bool dashed;
-  const _RailPainter(this.color, {required this.dashed});
+
+  /// The switch's band, left unpainted so the rail stops at its edges.
+  final (double, double)? gap;
+  const _RailPainter(this.color, {required this.dashed, this.gap});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1433,15 +1481,25 @@ class _RailPainter extends CustomPainter {
       ..color = color
       ..strokeWidth = 2;
     final x = size.width / 2;
-    if (!dashed) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-      return;
+    void segment(double from, double to) {
+      if (to <= from) return;
+      if (!dashed) {
+        canvas.drawLine(Offset(x, from), Offset(x, to), paint);
+        return;
+      }
+      for (var y = from; y < to; y += 8) {
+        canvas.drawLine(Offset(x, y), Offset(x, (y + 4).clamp(from, to)), paint);
+      }
     }
-    for (var y = 0.0; y < size.height; y += 8) {
-      canvas.drawLine(Offset(x, y), Offset(x, (y + 4).clamp(0, size.height)), paint);
+    final g = gap;
+    if (g == null) {
+      segment(0, size.height);
+    } else {
+      segment(0, g.$1);
+      segment(g.$2, size.height);
     }
   }
 
   @override
-  bool shouldRepaint(_RailPainter old) => old.color != color || old.dashed != dashed;
+  bool shouldRepaint(_RailPainter old) => old.color != color || old.dashed != dashed || old.gap != gap;
 }

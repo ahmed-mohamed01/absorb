@@ -495,8 +495,15 @@ class PositionSyncController extends ChangeNotifier {
     if (_initialStarted) return;
     _initialStarted = true;
     try {
-      perms = await api.positionSyncPermissions();
-      info = await api.positionSyncBookInfo(bookId);
+      final (p, i) = await (api.positionSyncPermissions(), api.positionSyncBookInfo(bookId)).wait;
+      perms = p;
+      info = i;
+    } on ParallelWaitError catch (e) {
+      // Keep whichever read worked.
+      final (p, i) = e.values as (PositionSyncPermissions?, PositionSyncBookInfo?);
+      perms = p ?? perms;
+      info = i;
+      debugPrint('[PositionSync] book info for $bookId: ${e.errors}');
     } catch (e) {
       debugPrint('[PositionSync] book info for $bookId: $e');
     }

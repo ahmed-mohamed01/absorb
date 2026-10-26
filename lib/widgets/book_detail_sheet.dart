@@ -374,6 +374,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
       });
     }
     _loadItem();
+    _forkPrefetchSync();
     _loadBookmarks();
     _warmStats();
     PlayerSettings.getSyncReadingListening().then((on) {
@@ -400,6 +401,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
 
   @override
   void dispose() {
+    _forkReleaseSync();
     SocketService().removeItemUpdatedListener(_onSocketItemUpdated);
     _liveRefreshDebounce?.cancel();
     _dockPoll?.cancel();
@@ -644,7 +646,10 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     }
     final t0 = DateTime.now();
     debugPrint('[BookDetail] _deriveCoverScheme start url=$url');
-    PaletteGenerator.fromImageProvider(provider, maximumColorCount: 16)
+    // Palette quantization runs on the UI thread; on a full-size cover it
+    // stalls the sheet's opening slide when the item is already cached.
+    // A thumbnail gives the same accent.
+    PaletteGenerator.fromImageProvider(ResizeImage(provider, width: 120), maximumColorCount: 16)
         .then((palette) {
       debugPrint('[BookDetail] PaletteGenerator ok in ${DateTime.now().difference(t0).inMilliseconds}ms');
       final seedColor = accentFromCoverPalette(palette);
@@ -1343,11 +1348,10 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                 child: Center(
                   child: icon == null || base == null
                       ? mark
-                      : SvgPicture.network(
-                          '$base/assets/provider-icons/$icon',
+                      : SvgPicture(
+                          _forkProviderIconLoader('$base/assets/provider-icons/$icon', lib.mediaHeaders),
                           width: 14,
                           height: 14,
-                          headers: lib.mediaHeaders,
                           placeholderBuilder: (_) => mark,
                           errorBuilder: (_, __, ___) => mark,
                         ),

@@ -6,7 +6,26 @@ part of '../book_detail_sheet.dart';
 // See FORK_NOTES.md.
 const _forkTagChipLimit = 5;
 
+/// flutter_svg caches a picture by its loader, and `mediaHeaders` is a new map
+/// on every read, so a loader made per build fetched the provider icons again
+/// on every open. One loader per icon URL (a handful of providers) keeps them
+/// cached; the headers it was made with only matter for its first fetch.
+final _forkProviderIconLoaders = <String, SvgNetworkLoader>{};
+
+SvgNetworkLoader _forkProviderIconLoader(String url, Map<String, String> headers) =>
+    _forkProviderIconLoaders.putIfAbsent(url, () => SvgNetworkLoader(url, headers: headers));
+
+/// Releases the sync state each open sheet started loading, run when it closes.
+final _forkSyncPrefetch = Expando<VoidCallback>();
+
 extension _ForkBookDetail on _BookDetailSheetContentState {
+  void _forkPrefetchSync() {
+    final release = prefetchPositionSync(context.read<AuthProvider>(), context.read<LibraryProvider>(), widget.itemId);
+    if (release != null) _forkSyncPrefetch[this] = release;
+  }
+
+  void _forkReleaseSync() => _forkSyncPrefetch[this]?.call();
+
   ({Widget primary, Widget? secondary}) _forkActionButtons({
     required BuildContext context,
     required ColorScheme cs,
