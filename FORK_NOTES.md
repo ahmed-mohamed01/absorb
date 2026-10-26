@@ -4,13 +4,19 @@ This is a personal fork of [pounat/absorb](https://github.com/pounat/absorb). It
 
 Last synced with upstream: `761ec117` (Bump to 1.12.1+301), 2026-10-24.
 
+## Branches
+
+- `main` mirrors `upstream/main` and never carries fork changes. It only ever fast-forwards.
+- `fork` is `main` plus every fork change. All fork work is committed or merged here, and sideloaded builds come from here.
+- Work branches start from `fork` and merge back into it. A change meant for upstream starts from `main` instead, so nothing fork-only goes with it.
+
 ## Rules
 
 1. New behaviour goes in fork-owned files under a `fork/` folder. Upstream files only get small hooks that call into them.
 2. A hook is the fewest lines that can reach the fork code. Do not reformat, rename or reorder upstream code.
 3. Every changed path under `lib/`, `android/`, `ios/` or `pubspec.yaml` must be listed in this file before it is committed. The pre-commit hook (`.githooks/pre-commit`) enforces it.
 4. Do not commit regenerated `lib/l10n/app_localizations_*.dart` and do not add translation strings. New text is a plain constant until upstream takes it.
-5. Sync by rebasing: `git fetch upstream && git rebase upstream/main`, then update the date and commit above. `git config rerere.enabled true` is on.
+5. Sync by rebasing: `git fetch upstream`, fast-forward `main` to `upstream/main`, then on `fork` run `git rebase main`, update the date and commit above. `git config rerere.enabled true` is on.
 6. Send generic improvements upstream as small separate PRs. When one is accepted, delete its row below.
 
 Setup on a fresh clone:
