@@ -11,14 +11,16 @@ import '../../services/api_service.dart';
 import '../../services/fork/position_sync_chain.dart';
 import '../../services/fork/position_sync_controller.dart';
 import '../adaptive_modal.dart';
+import '../book_detail_sheet.dart' show showBookDetailSheet;
 import '../overlay_toast.dart';
 import '../stackable_sheet.dart';
 import 'tinted_sheet.dart';
 
 // Fork-owned: the BookOrbit Position sync button in the detail icon row and
 // its sheet (the chain of linked editions, Generate read-along, Change
-// edition). The hooks are the import in book_detail_sheet.dart and the button
-// in `_forkIconRow`. See FORK_NOTES.md.
+// edition; tapping another edition's card opens its page). The hooks are
+// the import in book_detail_sheet.dart and the button in `_forkIconRow`.
+// See FORK_NOTES.md.
 
 const _green = Color(0xFF8FDCA8);
 const _amber = Color(0xFFF2C46D);
@@ -440,6 +442,22 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     return r.subtitle;
   }
 
+  /// The BookOrbit book a card opens: any edition but the one this page is
+  /// already showing. The Audiobookshelf item has no page here.
+  int? _openableBookId(ChainCardRow r) {
+    final cover = r.cover;
+    if (r.isThisBook || cover is! BookCover || cover.bookId == _c.bookId) return null;
+    return cover.bookId;
+  }
+
+  // The sync sheet closes first, so the edition's page opens over the book
+  // page it came from rather than over the sheet.
+  void _closeAndOpenBook(int bookId) {
+    final nav = Navigator.of(context);
+    nav.pop();
+    showBookDetailSheet(nav.context, '$bookId');
+  }
+
   Widget _cardRow(BuildContext context, ChainCardRow r, {required bool inGroup}) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurfaceVariant;
@@ -470,37 +488,44 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         child: Text(PositionSyncCopy.actionChange),
       );
     }
-    final card = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: cs.onSurface.withValues(alpha: 0.04),
+    final openId = _openableBookId(r);
+    final card = Material(
+      color: cs.onSurface.withValues(alpha: 0.04),
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(inGroup ? 13 : 16),
-        border: Border.all(
+        side: BorderSide(
           color: r.isThisBook ? _accent.withValues(alpha: 0.55) : cs.onSurface.withValues(alpha: r.linked ? 0.1 : 0.18),
           width: r.linked ? 1 : 1.5,
         ),
       ),
-      child: Row(children: [
-        _cover(context, r.cover, r.edition, 42, 62),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _kindLine(context, r.edition, [
-              if (r.isThisBook) _tag(PositionSyncCopy.tagThisBook, _accent),
-              if (r.external) _tag(PositionSyncCopy.tagExternal, muted),
-              if (!r.linked && r.chip != null) _tag(r.chip!, muted),
-            ]),
-            const SizedBox(height: 2),
-            Text(r.title ?? PositionSyncCopy.untitled,
-                maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            if (subtitle != null) ...[
-              const SizedBox(height: 2),
-              Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: muted)),
-            ],
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: openId == null ? null : () => _closeAndOpenBook(openId),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(children: [
+            _cover(context, r.cover, r.edition, 42, 62),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _kindLine(context, r.edition, [
+                  if (r.isThisBook) _tag(PositionSyncCopy.tagThisBook, _accent),
+                  if (r.external) _tag(PositionSyncCopy.tagExternal, muted),
+                  if (!r.linked && r.chip != null) _tag(r.chip!, muted),
+                ]),
+                const SizedBox(height: 2),
+                Text(r.title ?? PositionSyncCopy.untitled,
+                    maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 2),
+                  Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: muted)),
+                ],
+              ]),
+            ),
+            if (trailing != null) trailing,
           ]),
         ),
-        if (trailing != null) trailing,
-      ]),
+      ),
     );
     final job = r.job;
     if (job == null) return card;
