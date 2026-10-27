@@ -13,6 +13,7 @@ import '../../services/fork/position_sync_controller.dart';
 import '../adaptive_modal.dart';
 import '../overlay_toast.dart';
 import '../stackable_sheet.dart';
+import 'tinted_sheet.dart';
 
 // Fork-owned: the BookOrbit Position sync button in the detail icon row and
 // its sheet (the chain of linked editions, Generate read-along, Change
@@ -271,19 +272,9 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final base = Theme.of(context).bottomSheetTheme.backgroundColor ?? cs.surface;
-    final tint = widget.tint;
     return Container(
-      decoration: BoxDecoration(
-        color: base,
-        // The book page's own cover gradient, so the sheet reads as part of it.
-        gradient: tint == null ? null : LinearGradient(
-          begin: Alignment.topCenter, end: Alignment.bottomCenter,
-          stops: const [0.0, 0.4, 1.0],
-          colors: [Color.alphaBlend(tint.withValues(alpha: 0.5), base), Color.alphaBlend(tint.withValues(alpha: 0.12), base), base],
-        ),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      // The book page's own cover gradient, so the sheet reads as part of it.
+      decoration: forkTintedSheetDecoration(context, widget.tint),
       child: ListenableBuilder(
         listenable: _c,
         builder: (context, _) => ListView(

@@ -18,6 +18,14 @@ const _kMarkNotFinished = 'Mark as not finished';
 const _kAllActions = 'All actions';
 const _kNoSimilar = 'No similar books found';
 const _kSimilarOffline = 'Similar books need a connection';
+const _kPreviewPlaying = 'Playing a preview';
+const _kPreviewLoading = 'Loading a preview…';
+const _kPreviewLength = 'Up to 5 minutes of the narration';
+const _kStop = 'Stop';
+const _kDates = 'Dates';
+const _kStarted = 'Started';
+const _kFinished = 'Finished';
+const _kAllActionsHint = 'Edit, reset progress, delete and more';
 String _kPagesCount(int n) => n == 1 ? '1 page' : '$n pages';
 
 /// Per-sheet state the layout needs and the upstream state class doesn't have.
@@ -55,7 +63,26 @@ Color? _forkReadStatusColor(String s) => switch (s) {
       _ => null,
     };
 
-typedef _ForkSheetOption<T> = ({T value, IconData icon, Color? color, String label, bool selected});
+/// One row in a pick-from sheet: an icon (in [color] when it has one), a
+/// label, an optional [subtitle] under it and [detail] on the right.
+class _ForkSheetOption<T> {
+  final T value;
+  final IconData icon;
+  final Color? color;
+  final String label;
+  final bool selected;
+  final String? subtitle;
+  final String? detail;
+  const _ForkSheetOption({
+    required this.value,
+    required this.icon,
+    required this.label,
+    this.color,
+    this.selected = false,
+    this.subtitle,
+    this.detail,
+  });
+}
 
 extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   _ForkDetailUi get _ui => _forkDetailUi[this] ??= _ForkDetailUi();
@@ -86,7 +113,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     final tags = ((media['tags'] as List<dynamic>?) ?? (metadata['tags'] as List<dynamic>?) ?? const []).cast<String>();
     final publisher = metadata['publisher'] as String? ?? '';
     final year = metadata['publishedYear']?.toString() ?? '';
-    final pages = num.tryParse('${metadata['pageCount'] ?? metadata['pages'] ?? ''}')?.toInt() ?? 0;
+    final pages = forkPageCount(metadata);
     final lib = context.watch<LibraryProvider>();
     final auth = context.read<AuthProvider>();
     final progress = lib.getProgress(widget.itemId);
@@ -120,21 +147,17 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
       title: title, authorName: authorName, media: media,
     );
 
-    // Audiobookshelf has no status of its own, so it shows where you are.
-    final shownStatus = auth.isBookOrbit
-        ? _displayReadStatus(isFinished)
-        : isFinished ? 'read' : progress > 0 ? 'reading' : 'unread';
+    final shownStatus = forkShownStatus(
+      isBookOrbit: auth.isBookOrbit,
+      bookOrbitStatus: ((_item?['bookOrbit'] as Map?)?['readStatus'] as Map?)?['status'] as String?,
+      isFinished: isFinished,
+      progress: progress,
+    );
     final statusColor = _forkReadStatusColor(shownStatus) ?? cs.onSurface;
     // Under the status, when it was started or finished if known, else what
     // the cell is.
-    // Zero means no date: BookOrbit's mapper falls back to the last
-    // playback, which is 0 for a book never played.
-    int? when(String key) {
-      final v = (progressData?[key] as num?)?.toInt();
-      return v != null && v > 0 ? v : null;
-    }
-    final startedAt = when('startedAt');
-    final finishedAt = when('finishedAt');
+    final startedAt = forkDate(progressData?['startedAt']);
+    final finishedAt = forkDate(progressData?['finishedAt']);
     // Day first with no comma ("26 Oct 2026"), which fits the narrow cell.
     String day(int ms) => DateFormat('d MMM y', l.localeName).format(DateTime.fromMillisecondsSinceEpoch(ms));
     final statusLabel = (shownStatus == 'read' || shownStatus == 'skimmed') && finishedAt != null
@@ -143,12 +166,12 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
             ? l.startedDate(day(startedAt))
             : l.readStatusTitle;
     // The chevron gives way when the status cell is tight; the colour and
-    // the tap ripple still say it opens something. Worked out from the page
-    // width and the cells the strip will have (status 3 flex, the others 2),
-    // since the strip's IntrinsicHeight can't hold a LayoutBuilder.
-    final otherCells = (year.isNotEmpty ? 1 : 0) + (duration > 0 || pages > 0 ? 1 : 0);
-    final statusRoomy = (MediaQuery.sizeOf(context).width - 32) * 3 / (3 + 2 * otherCells) - 8 >= 140 &&
-        MediaQuery.textScalerOf(context).scale(1) <= 1.15;
+    // the tap ripple still say it opens something.
+    final statusRoomy = forkStatusCellRoomy(
+      pageWidth: MediaQuery.sizeOf(context).width - 32,
+      otherCells: (year.isNotEmpty ? 1 : 0) + (duration > 0 || pages > 0 ? 1 : 0),
+      textScale: MediaQuery.textScalerOf(context).scale(1),
+    );
     // The status sits in the middle, where it's easy to reach and change;
     // pages ride along under the length when the book has both.
     final stats = <({Widget value, String label, bool status})>[
@@ -167,16 +190,9 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         (value: Text('$pages', maxLines: 1, overflow: TextOverflow.ellipsis, style: tt.titleSmall), label: _kPages, status: false),
     ];
 
-    // BookOrbit's picks can include this very book and its other editions
-    // (same title, another id), and several editions of one pick: each title
-    // shows once, and never this book's. Titles compare without a subtitle,
-    // since one edition may carry ": A LitRPG Adventure" and another not.
-    String titleKey(Object? t) => '${t ?? ''}'.split(':').first.trim().toLowerCase();
-    final seenTitles = {titleKey(title)};
-    final similar = [
-      for (final b in _similar)
-        if (b['id'] != widget.itemId && seenTitles.add(titleKey(b['title']))) b,
-    ];
+    final similar = forkSimilarToShow(_similar, itemId: widget.itemId, title: title);
+    final hasAbout = descRaw.isNotEmpty || genres.isNotEmpty || tags.isNotEmpty;
+    final personalNote = ((_item?['bookOrbit'] as Map?)?['personalNote'] as String?)?.trim() ?? '';
     final similarReady = similar.isNotEmpty && !lib.isOffline;
     // An audiobook always gets every tab, an empty one saying so, so the
     // switcher keeps its shape from book to book. Chapters and bookmarks
@@ -186,17 +202,22 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
       if (!isEbookOnly) ('chapters', Icons.list_rounded, l.chapters),
       if (!isEbookOnly) ('bookmarks', Icons.bookmarks_outlined, l.bookmarks),
     ];
-    // With no similar books to show, the page opens on the chapters instead,
-    // until the reader picks a tab themselves.
-    var preferred = _ui.tab;
-    if (!_ui.userPickedTab && preferred == 'similar' && !similarReady &&
-        (!_similarLoaded || _ui.similarFetched || lib.isOffline) && chapters.isNotEmpty && tabs.any((t) => t.$1 == 'chapters')) {
-      preferred = 'chapters';
-    }
-    final selected = tabs.any((t) => t.$1 == preferred) ? preferred : (tabs.isEmpty ? '' : tabs.first.$1);
-    // Loading only while a fetch is actually out: a book that came back from
-    // the offline fallback never starts one.
-    final similarLoading = !similarReady && _similarLoaded && !_ui.similarFetched && !lib.isOffline;
+    final selected = forkSelectedTab(
+      tabs: [for (final t in tabs) t.$1],
+      preferred: _ui.tab,
+      userPicked: _ui.userPickedTab,
+      similarReady: similarReady,
+      similarRequested: _similarLoaded,
+      similarFetched: _ui.similarFetched,
+      offline: lib.isOffline,
+      hasChapters: chapters.isNotEmpty,
+    );
+    final similarLoading = forkSimilarLoading(
+      similarReady: similarReady,
+      similarRequested: _similarLoaded,
+      similarFetched: _ui.similarFetched,
+      offline: lib.isOffline,
+    );
     final emptyTab = switch (selected) {
       'similar' => similarReady || similarLoading ? null : lib.isOffline ? _kSimilarOffline : _kNoSimilar,
       'chapters' => chapters.isEmpty ? l.noChaptersBook : null,
@@ -221,7 +242,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           // The stackable sheet draws nothing behind its content, so the
           // sheet paints its own tinted backing, like the pick-from sheets.
           builder: (ctx, sc) => DecoratedBox(
-            decoration: BoxDecoration(color: _forkSheetColor(), borderRadius: const BorderRadius.vertical(top: Radius.circular(24))),
+            decoration: forkTintedSheetDecoration(ctx, _forkSheetTint),
             child: ListView(controller: sc, padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), children: [
             Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.24), borderRadius: BorderRadius.circular(2)))),
@@ -234,20 +255,27 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
               if (chapters.isNotEmpty) _chip(Icons.list_rounded, l.chaptersChip(chapters.length)),
               ..._audioInfoChips(media),
               if (publisher.isNotEmpty) _chip(Icons.business_rounded, publisher),
-              if (progressData?['startedAt'] is num)
-                _chip(Icons.play_circle_outline_rounded, l.startedDate(_fmtDate((progressData!['startedAt'] as num).toInt())),
-                    onTap: () => _editProgressDate(
-                          auth: auth, lib: lib, editingFinishedDate: false,
-                          startedAt: (progressData['startedAt'] as num).toInt(),
-                          finishedAt: (progressData['finishedAt'] as num?)?.toInt(),
-                        )),
-              if (progressData?['finishedAt'] is num)
-                _chip(Icons.check_circle_outline_rounded, l.finishedDate(_fmtDate((progressData!['finishedAt'] as num).toInt())),
-                    onTap: () => _editProgressDate(
-                          auth: auth, lib: lib, editingFinishedDate: true,
-                          startedAt: (progressData['startedAt'] as num?)?.toInt() ?? (progressData['finishedAt'] as num).toInt(),
-                          finishedAt: (progressData['finishedAt'] as num).toInt(),
-                        )),
+              // Read live from the library, not captured when the sheet
+              // opened, so a date edited here shows its new value at once.
+              ...() {
+                final pd = ctx.watch<LibraryProvider>().getProgressData(widget.itemId);
+                final started = forkDate(pd?['startedAt']);
+                final finished = forkDate(pd?['finishedAt']);
+                return [
+                  if (started != null)
+                    _chip(Icons.play_circle_outline_rounded, l.startedDate(_fmtDate(started)),
+                        onTap: () => _editProgressDate(
+                              auth: auth, lib: lib, editingFinishedDate: false,
+                              startedAt: started, finishedAt: finished,
+                            )),
+                  if (finished != null)
+                    _chip(Icons.check_circle_outline_rounded, l.finishedDate(_fmtDate(finished)),
+                        onTap: () => _editProgressDate(
+                              auth: auth, lib: lib, editingFinishedDate: true,
+                              startedAt: started ?? finished, finishedAt: finished,
+                            )),
+                ];
+              }(),
             ]),
           ])),
         );
@@ -268,7 +296,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           for (var i = 0; i < stats.length; i++) ...[
             if (i > 0) VerticalDivider(width: 1, color: cs.onSurface.withValues(alpha: 0.10)),
             // The status and its date need the most room, the year the least.
-            Expanded(flex: stats[i].status ? 3 : 2, child: Builder(builder: (cellContext) {
+            Expanded(flex: stats[i].status ? forkStatusCellFlex : forkOtherCellFlex, child: Builder(builder: (cellContext) {
               final cell = Padding(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), child: Column(children: [
                 stats[i].value,
                 Text(stats[i].label, maxLines: 2, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis,
@@ -288,16 +316,38 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         if (actions.secondary != null) ...[const SizedBox(width: 10), actions.secondary!],
       ]),
       _forkSyncStatusLine(cs, tt, l, accent),
-      if (descRaw.isNotEmpty || genres.isNotEmpty || tags.isNotEmpty) ...[
+      // Preview starts from the … menu, which closes; this says it's playing
+      // and stops it without going back to the menu.
+      if (_preview != null && (_preview!.isPlaying || _preview!.isLoading)) ...[
+        const SizedBox(height: 10),
+        _forkPreviewLine(cs, tt, accent, chapters, duration),
+      ],
+      if (hasAbout) ...[
         const SizedBox(height: 20),
         Text(l.aboutSection, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         const SizedBox(height: 8),
         _forkAbout(context, cs, tt, l, accent, descRaw, [
           ...genres.map((g) => filterChip(g, false)),
           ...tags.map((t) => filterChip(t, true)),
-        ]),
+        ], trailing: bookOrbitOnline && personalNote.isEmpty
+            ? TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: cs.onSurfaceVariant,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                ),
+                onPressed: () => _editPersonalNote(auth, personalNote),
+                icon: const Icon(Icons.edit_note_rounded, size: 18),
+                label: Text(l.personalNoteAdd),
+              )
+            : null),
       ],
-      if (bookOrbitOnline) ...[const SizedBox(height: 8), _personalNoteBlock(cs, tt, auth)],
+      // A written note shows in full under About; with no About section the
+      // add-a-note button stands on its own as before.
+      if (bookOrbitOnline && (personalNote.isNotEmpty || !hasAbout)) ...[
+        const SizedBox(height: 8),
+        _personalNoteBlock(cs, tt, auth),
+      ],
       if (bookOrbitOnline) ...[
         const SizedBox(height: 16),
         ReadingLogCard(itemId: widget.itemId, accent: accent),
@@ -446,18 +496,18 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         icon: const Icon(Icons.more_horiz_rounded),
         onPressed: () async {
           final value = await _forkPickFromSheet<String>(null, [
-            (value: 'finished', icon: isFinished ? Icons.remove_done_rounded : Icons.check_circle_outline_rounded, color: null,
+            _ForkSheetOption(value: 'finished', icon: isFinished ? Icons.remove_done_rounded : Icons.check_circle_outline_rounded, color: null,
               label: isFinished ? _kMarkNotFinished : Wording.of(context).fullyAbsorbAction, selected: false),
             if (!lib.isOffline && !auth.isBookOrbit)
-              (value: 'playlist', icon: Icons.playlist_add_rounded, color: null, label: l.addToPlaylist, selected: false),
+              _ForkSheetOption(value: 'playlist', icon: Icons.playlist_add_rounded, color: null, label: l.addToPlaylist, selected: false),
             if (!lib.isOffline && !lib.isPodcastLibrary && (auth.isAdmin || auth.isBookOrbit))
-              (value: 'collection', icon: Icons.collections_bookmark_outlined, color: null, label: l.addToCollection, selected: false),
+              _ForkSheetOption(value: 'collection', icon: Icons.collections_bookmark_outlined, color: null, label: l.addToCollection, selected: false),
             // A sample of the narration, offered until you're a minute in.
             if (showPreview)
-              (value: 'preview', icon: (_preview?.isPlaying ?? false) ? Icons.stop_rounded : Icons.headphones_rounded, color: null,
+              _ForkSheetOption(value: 'preview', icon: (_preview?.isPlaying ?? false) ? Icons.stop_rounded : Icons.headphones_rounded, color: null,
                 label: (_preview?.isPlaying ?? false) ? l.chapterStopPreview : l.preview, selected: false),
-            (value: 'info', icon: Icons.info_outline_rounded, color: null, label: _kBookInfo, selected: false),
-            (value: 'all', icon: Icons.grid_view_rounded, color: null, label: _kAllActions, selected: false),
+            _ForkSheetOption(value: 'info', icon: Icons.info_outline_rounded, color: null, label: _kBookInfo, selected: false),
+            _ForkSheetOption(value: 'all', icon: Icons.grid_view_rounded, label: _kAllActions, subtitle: _kAllActionsHint),
           ]);
           if (!context.mounted) return;
           switch (value) {
@@ -485,22 +535,17 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     required Map<String, dynamic> metadata,
     required List<dynamic> seriesEntries,
   }) {
-    // A subtitle that only restates the series ("1 (Honor Harrington)") says
-    // nothing the series pill doesn't.
-    final showSubtitle = subtitle.isNotEmpty && !seriesEntries.any((s) {
-      final name = (s['name'] as String? ?? '').trim().toLowerCase();
-      return name.isNotEmpty && subtitle.toLowerCase().contains(name);
-    });
-    // About two fifths of the page's width, so the title column beside it
-    // keeps room on a narrow phone and the cover grows on a wide one.
-    // Every cover gets the same height, about half the page's width (a
-    // square one then takes half the row); a 2:3 cover is narrower beside it.
-    final coverHeight = ((MediaQuery.sizeOf(context).width - 32) * 0.48).clamp(160.0, 220.0);
+    final shown = forkDisplayTitle(title: title, subtitle: subtitle, series: seriesEntries);
+    // Every cover gets the same height, two fifths of the page's width (a
+    // square one then takes two fifths of the row); a 2:3 cover is narrower.
+    final coverHeight = ((MediaQuery.sizeOf(context).width - 32) * 0.40).clamp(130.0, 190.0);
     final coverWidth = _squareCovers ? coverHeight : coverHeight / 1.5;
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       if (_coverUrl != null) ...[
-        GestureDetector(
-          onTap: () => _showFullCover(context, _fullResCoverUrl ?? _coverUrl!, lib.mediaHeaders, title),
+        // Tapping the cover opens it full size; the ripple over it says so.
+        Semantics(
+          button: true,
+          label: title,
           child: Container(
             width: coverWidth,
             height: coverHeight,
@@ -509,33 +554,43 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
               boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 16, offset: const Offset(0, 4))],
             ),
             clipBehavior: Clip.antiAlias,
-            child: _coverUrl!.startsWith('/')
-                ? Image.file(File(_coverUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())
-                : CachedNetworkImage(
-                    imageUrl: _coverUrl!, fit: BoxFit.cover,
-                    httpHeaders: lib.mediaHeaders,
-                    placeholder: (_, __) => _forkCoverPlaceholder(lib),
-                    errorWidget: (_, __, ___) => const SizedBox(),
-                  ),
+            child: Stack(fit: StackFit.expand, children: [
+              _coverUrl!.startsWith('/')
+                  ? Image.file(File(_coverUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())
+                  : CachedNetworkImage(
+                      imageUrl: _coverUrl!, fit: BoxFit.cover,
+                      httpHeaders: lib.mediaHeaders,
+                      placeholder: (_, __) => _forkCoverPlaceholder(lib),
+                      errorWidget: (_, __, ___) => const SizedBox(),
+                    ),
+              Material(
+                type: MaterialType.transparency,
+                child: InkWell(
+                  onTap: () => _showFullCover(context, _fullResCoverUrl ?? _coverUrl!, lib.mediaHeaders, title),
+                ),
+              ),
+            ]),
           ),
         ),
         const SizedBox(width: 16),
       ],
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, maxLines: 3, overflow: TextOverflow.ellipsis,
+        Text(shown.title, maxLines: 2, overflow: TextOverflow.ellipsis,
             style: tt.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurface)),
-        if (showSubtitle) ...[
-          const SizedBox(height: 4),
-          Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+        // Tight, in reading order: title, subtitle, who wrote and read it,
+        // then the series as a small pill and the rating.
+        if (shown.subtitle.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(shown.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
         ],
-        if (seriesEntries.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          _forkSeriesPill(context, l, accent, seriesEntries),
-        ],
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         _buildAuthorLinks(context, metadata, cs, tt, accent),
         _buildNarratorLinks(context, metadata, cs, tt, accent),
-        const SizedBox(height: 6),
+        if (seriesEntries.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          _forkSeriesPill(context, l, accent, seriesEntries),
+        ],
+        const SizedBox(height: 4),
         _forkRatingLine(cs, tt, l),
       ])),
     ]);
@@ -545,19 +600,10 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   /// number stands for them, a "+N" says there are more, and a tap then lists
   /// them all. A stack of pills pushed the author out of view.
   Widget _forkSeriesPill(BuildContext context, AppLocalizations l, Color accent, List<dynamic> seriesEntries) {
-    // The number may arrive as a string or a number, so it's never cast.
-    String label(dynamic s) => '${s['name'] ?? ''}'
-        '${'${s['sequence'] ?? ''}'.isNotEmpty ? ' #${s['sequence']}' : ''}';
-    // A plain loop: the cached seed's list is a List<Map>, and firstWhere's
-    // orElse on it rejects a closure typed for List<dynamic>.
-    dynamic main = seriesEntries.first;
-    for (final s in seriesEntries) {
-      if ('${s['sequence'] ?? ''}'.isNotEmpty) {
-        main = s;
-        break;
-      }
-    }
-    final others = seriesEntries.where((s) => !identical(s, main)).toList();
+    final series = forkMainSeries(seriesEntries)!;
+    final main = series.main;
+    final others = series.others;
+    const label = forkSeriesLabel;
     return GestureDetector(
       onTap: () async {
         if (others.isEmpty) {
@@ -566,30 +612,29 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         }
         final picked = await _forkPickFromSheet<dynamic>(l.seriesLabel, [
           for (final s in [main, ...others])
-            (value: s, icon: Icons.auto_stories_rounded, color: accent, label: label(s), selected: false),
+            _ForkSheetOption(value: s, icon: Icons.auto_stories_rounded, color: accent, label: label(s), selected: false),
         ]);
         if (picked != null && context.mounted) {
           _openSeries(context, picked['id'] as String?, picked['name'] as String? ?? '');
         }
       },
+      // A small neutral pill: just the series and its number, with "+N" and
+      // a down chevron only when there are more series to choose from.
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
         decoration: BoxDecoration(
-          color: accent.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: accent.withValues(alpha: 0.18)),
+          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.09),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.auto_stories_rounded, size: 14, color: accent),
-          const SizedBox(width: 6),
           Flexible(child: Text(label(main), maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent))),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.onSurface))),
           if (others.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            Text('+${others.length}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent.withValues(alpha: 0.7))),
+            const SizedBox(width: 5),
+            Text('+${others.length}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            Icon(Icons.expand_more_rounded, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ],
-          const SizedBox(width: 2),
-          Icon(others.isEmpty ? Icons.chevron_right_rounded : Icons.expand_more_rounded, size: 16, color: accent.withValues(alpha: 0.6)),
         ]),
       ),
     );
@@ -639,6 +684,43 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           maxLines: 1, overflow: TextOverflow.ellipsis, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant))),
         if (onTap != null) Icon(Icons.chevron_right_rounded, size: 16, color: cs.onSurfaceVariant),
       ])),
+    );
+  }
+
+  Widget _forkPreviewLine(ColorScheme cs, TextTheme tt, Color accent, List<dynamic> chapters, double duration) {
+    final loading = _preview?.isLoading ?? false;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.3)),
+      ),
+      child: Row(children: [
+        SizedBox(width: 22, height: 22, child: loading
+            ? Padding(padding: const EdgeInsets.all(2), child: CircularProgressIndicator(strokeWidth: 2, color: accent))
+            : Icon(Icons.graphic_eq_rounded, size: 22, color: accent)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(loading ? _kPreviewLoading : _kPreviewPlaying, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w600)),
+          Text(_kPreviewLength, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
+        ])),
+        if (!loading)
+          TextButton.icon(
+            style: TextButton.styleFrom(
+              foregroundColor: cs.onSurface,
+              backgroundColor: cs.onSurface.withValues(alpha: 0.10),
+              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              shape: const StadiumBorder(),
+            ),
+            onPressed: () => _togglePreview(context, chapters, duration),
+            icon: const Icon(Icons.stop_rounded, size: 18),
+            label: const Text(_kStop),
+          ),
+      ]),
     );
   }
 
@@ -734,9 +816,14 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   /// is more to see: text past those lines, or the genre and tag [chips]
   /// that wait behind it. With no description the chips show at once.
   Widget _forkAbout(BuildContext context, ColorScheme cs, TextTheme tt, AppLocalizations l, Color accent,
-      String descRaw, List<Widget> chips) {
+      String descRaw, List<Widget> chips, {Widget? trailing}) {
     final style = tt.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.7), height: 1.5);
-    if (descRaw.isEmpty) return Wrap(spacing: 8, runSpacing: 8, children: chips);
+    if (descRaw.isEmpty) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 8, runSpacing: 8, children: chips),
+        if (trailing != null) Align(alignment: Alignment.centerRight, child: trailing),
+      ]);
+    }
     return LayoutBuilder(builder: (context, box) {
       // Measured on the text HtmlDescription renders: the same block-to-
       // newline steps as its parser, then the inline tags dropped.
@@ -770,13 +857,20 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           const SizedBox(height: 12),
           Wrap(spacing: 8, runSpacing: 8, children: chips),
         ],
-        if (more)
-          TextButton.icon(
-            style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
-            onPressed: () => setState(() => _ui.aboutExpanded = !_ui.aboutExpanded),
-            icon: Icon(_ui.aboutExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded),
-            label: Text(_ui.aboutExpanded ? l.showLess : l.readMore),
-          ),
+        // Read more on the left and the private note on the right share one
+        // row, where they used to take a row each.
+        if (more || trailing != null)
+          Row(children: [
+            if (more)
+              TextButton.icon(
+                style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
+                onPressed: () => setState(() => _ui.aboutExpanded = !_ui.aboutExpanded),
+                icon: Icon(_ui.aboutExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded),
+                label: Text(_ui.aboutExpanded ? l.showLess : l.readMore),
+              ),
+            const Spacer(),
+            ?trailing,
+          ]),
       ]);
     });
   }
@@ -877,31 +971,47 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   Future<void> _forkPickReadStatus(AuthProvider auth, LibraryProvider lib,
       String current, bool isFinished, double currentTime, double duration) async {
     final l = AppLocalizations.of(context)!;
-    final options = auth.isBookOrbit ? bookOrbitReadStatuses : [isFinished ? 'reading' : current, 'read'];
+    final options = forkStatusOptions(isBookOrbit: auth.isBookOrbit, isFinished: isFinished, current: current);
+    // The dates sit under the statuses, so the date the strip shows can be
+    // changed where it's seen instead of under … > Book info.
+    final pd = lib.getProgressData(widget.itemId);
+    final started = forkDate(pd?['startedAt']);
+    final finished = forkDate(pd?['finishedAt']);
+    String day(int ms) => DateFormat('d MMM y', l.localeName).format(DateTime.fromMillisecondsSinceEpoch(ms));
+    const startedKey = '__started', finishedKey = '__finished';
     final picked = await _forkPickFromSheet<String>(l.readStatusTitle, [
       for (final s in options)
-        (value: s, icon: _forkReadStatusIcon(s), color: _forkReadStatusColor(s),
+        _ForkSheetOption(value: s, icon: _forkReadStatusIcon(s), color: _forkReadStatusColor(s),
           label: _BookDetailSheetContentState._readStatusLabel(l, s), selected: s == current),
+    ], footerTitle: _kDates, footer: [
+      if (started != null)
+        _ForkSheetOption(value: startedKey, icon: Icons.play_circle_outline_rounded, label: _kStarted, detail: day(started)),
+      if (finished != null)
+        _ForkSheetOption(value: finishedKey, icon: Icons.check_circle_outline_rounded, label: _kFinished, detail: day(finished)),
     ]);
     final api = auth.apiService;
     if (picked == null || picked == current || api == null || !mounted) return;
+    if (picked == startedKey || picked == finishedKey) {
+      await _editProgressDate(
+        auth: auth, lib: lib, editingFinishedDate: picked == finishedKey,
+        startedAt: started ?? finished!, finishedAt: finished,
+      );
+      return;
+    }
     // Read and Skimmed count as finished and everything else as not, the way
     // _displayReadStatus squares the two, so the finish state moves first;
     // a cancelled confirmation leaves everything as it was.
-    final done = picked == 'read' || picked == 'skimmed';
-    final moved = done != isFinished;
-    if (moved) {
-      if (done) {
+    final plan = forkStatusPlan(picked: picked, isFinished: isFinished, isBookOrbit: auth.isBookOrbit);
+    final finish = plan.finish;
+    if (finish != null) {
+      if (finish) {
         await _markFinished(context, auth, duration);
       } else {
         await _markNotFinished(context, auth, currentTime, duration);
       }
-      if (!mounted || (lib.getProgressData(widget.itemId)?['isFinished'] == true) != done) return;
+      if (!mounted || (lib.getProgressData(widget.itemId)?['isFinished'] == true) != finish) return;
     }
-    // Audiobookshelf has nothing past the finish state, and BookOrbit calls
-    // a book it was just told is finished Read. One already finished (say
-    // Skimmed) still needs Read set.
-    if (!auth.isBookOrbit || (picked == 'read' && moved)) return;
+    if (!plan.saveStatus) return;
     setState(() => _savingStatus = true);
     final ok = await api.setReadStatus(widget.itemId, picked);
     if (!mounted) return;
@@ -920,26 +1030,22 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     }
   }
 
-  /// The sheet colour tinted with the cover, as this page is.
-  Color _forkSheetColor() {
-    final cs = Theme.of(context).colorScheme;
-    final base = Theme.of(context).bottomSheetTheme.backgroundColor ?? cs.surfaceContainerLow;
-    final tint = PlayerSettings.einkMode ? null : _coverScheme?.primaryContainer;
-    return tint == null ? base : Color.alphaBlend(tint.withValues(alpha: 0.25), base);
-  }
+  /// The cover colour the page's sheets are tinted with; none on e-ink.
+  Color? get _forkSheetTint => PlayerSettings.einkMode ? null : _coverScheme?.primaryContainer;
 
   /// A short list to pick from, as a bottom sheet like the app's other menus,
   /// tinted with the cover the way this sheet is. Null when dismissed.
-  Future<T?> _forkPickFromSheet<T>(String? title, List<_ForkSheetOption<T>> options) {
+  Future<T?> _forkPickFromSheet<T>(String? title, List<_ForkSheetOption<T>> options,
+      {String? footerTitle, List<_ForkSheetOption<T>> footer = const []}) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final accent = (PlayerSettings.einkMode ? null : _coverScheme?.primary) ?? cs.primary;
     return showModalBottomSheet<T>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: _forkSheetColor(),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (ctx) => SafeArea(child: Padding(
+      // The page's shared tinted background, drawn by the content itself.
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => DecoratedBox(decoration: forkTintedSheetDecoration(ctx, _forkSheetTint), child: SafeArea(child: Padding(
         padding: const EdgeInsets.all(8),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 12),
@@ -948,7 +1054,18 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
             Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(title, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600))),
           Flexible(child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            for (final o in options)
+            for (final o in [...options, ...footer]) ...[
+              // A second group (the status sheet's dates) sits under a rule
+              // and its own small heading.
+              if (footer.isNotEmpty && identical(o, footer.first)) ...[
+                Divider(height: 20, indent: 16, endIndent: 16, color: cs.onSurface.withValues(alpha: 0.10)),
+                if (footerTitle != null)
+                  Align(alignment: Alignment.centerLeft, child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                    child: Text(footerTitle.toUpperCase(), style: tt.labelSmall?.copyWith(
+                        color: cs.onSurfaceVariant, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+                  )),
+              ],
               Material(
                 color: o.selected ? accent.withValues(alpha: 0.12) : Colors.transparent,
                 borderRadius: BorderRadius.circular(14),
@@ -962,16 +1079,26 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
                       child: Row(children: [
                         Icon(o.icon, size: 22, color: o.color ?? cs.onSurfaceVariant),
                         const SizedBox(width: 16),
-                        Expanded(child: Text(o.label, style: tt.bodyLarge?.copyWith(fontWeight: o.selected ? FontWeight.w600 : null))),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(o.label, style: tt.bodyLarge?.copyWith(fontWeight: o.selected ? FontWeight.w600 : null)),
+                          if (o.subtitle != null)
+                            Text(o.subtitle!, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                        ])),
+                        if (o.detail != null) ...[
+                          const SizedBox(width: 8),
+                          Text(o.detail!, style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+                        ],
                         if (o.selected) Icon(Icons.check_rounded, size: 20, color: accent),
                       ]),
                     ),
                   ),
                 ),
               ),
+            ],
           ]))),
         ]),
-      )),
+      ))),
     );
   }
 }
