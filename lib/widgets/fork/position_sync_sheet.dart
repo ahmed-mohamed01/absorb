@@ -51,16 +51,24 @@ Widget _tag(String text, Color color, {double fontSize = 11, EdgeInsets? padding
       child: Text(text, style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600, color: color)),
     );
 
-IconData _editionIcon(SyncEdition e) => switch (e) {
+IconData syncEditionIcon(SyncEdition e) => switch (e) {
       SyncEdition.audiobook => Icons.headphones_rounded,
       SyncEdition.ebook => Icons.menu_book_rounded,
       SyncEdition.readAlong => Icons.record_voice_over_rounded,
       SyncEdition.abs => Icons.home_work_rounded,
     };
 
+/// Each edition's own colour, as the Editions card draws it.
+Color syncEditionColor(BuildContext context, SyncEdition e) => _tone(context, switch (e) {
+      SyncEdition.audiobook => ChainTone.warning,
+      SyncEdition.readAlong => ChainTone.success,
+      SyncEdition.ebook => ChainTone.info,
+      SyncEdition.abs => ChainTone.muted,
+    });
+
 String _editionKind(SyncEdition e) => e == SyncEdition.abs ? PositionSyncCopy.kindAbs : editionShortName(e);
 
-String _formatBytes(int bytes) {
+String formatSyncBytes(int bytes) {
   if (bytes >= 1 << 30) return '${(bytes / (1 << 30)).toStringAsFixed(1)} GB';
   if (bytes >= 1 << 20) return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
   return '${(bytes / 1024).ceil()} KB';
@@ -110,12 +118,7 @@ class _ForkSyncButtonState extends State<ForkSyncButton> {
   @override
   void initState() {
     super.initState();
-    _c = PositionSyncController.acquire(widget.api, int.parse(widget.itemId));
-    _c.describeThisBook(widget.title, widget.authorName);
-    // After the frame: loading notifies, and the sheet may be listening.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_c.loadInitial());
-    });
+    _c = acquirePositionSync(widget.api, widget.itemId, widget.title, widget.authorName);
   }
 
   @override
@@ -169,6 +172,15 @@ class _ForkSyncButtonState extends State<ForkSyncButton> {
       ])),
     );
   }
+}
+
+/// Takes a book's shared controller for a widget on its page and starts it
+/// loading after the frame (loading notifies, and the sheet may be
+/// listening). Release it with [PositionSyncController.release].
+PositionSyncController acquirePositionSync(BookOrbitApiService api, String itemId, String title, String authorName) {
+  final c = PositionSyncController.acquire(api, int.parse(itemId))..describeThisBook(title, authorName);
+  WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(c.loadInitial()));
+  return c;
 }
 
 /// Starts a book's sync state loading as its detail sheet opens, beside the
@@ -417,7 +429,7 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     final cs = Theme.of(context).colorScheme;
     return Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
       Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(_editionIcon(edition), size: 14, color: cs.onSurfaceVariant),
+        Icon(syncEditionIcon(edition), size: 14, color: cs.onSurfaceVariant),
         const SizedBox(width: 6),
         Flexible(
           child: Text(_editionKind(edition),
@@ -1201,11 +1213,11 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
       if (audio != null)
         _miniRow(context, Icons.headphones_rounded,
             '${audio.title ?? PositionSyncCopy.untitled} · ${PositionSyncCopy.shortAudiobook}',
-            ra.audioBytes == null ? null : _formatBytes(ra.audioBytes!)),
+            ra.audioBytes == null ? null : formatSyncBytes(ra.audioBytes!)),
       if (audio != null && ebook != null) const SizedBox(height: 6),
       if (ebook != null)
         _miniRow(context, Icons.menu_book_rounded, '${ebook.title ?? PositionSyncCopy.untitled} · EPUB',
-            ra.epubBytes == null ? null : _formatBytes(ra.epubBytes!)),
+            ra.epubBytes == null ? null : formatSyncBytes(ra.epubBytes!)),
       const SizedBox(height: 14),
       Container(
         padding: const EdgeInsets.all(14),

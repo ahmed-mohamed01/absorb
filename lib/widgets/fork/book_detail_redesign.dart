@@ -322,6 +322,13 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         const SizedBox(height: 10),
         _forkPreviewLine(cs, tt, accent, chapters, duration),
       ],
+      if (ForkSyncButton.shouldShow(auth, lib, widget.itemId))
+        ForkEditionsCard(
+          key: ValueKey('fork-editions-${widget.itemId}'),
+          itemId: widget.itemId, api: auth.apiService as BookOrbitApiService, accent: accent,
+          title: title, authorName: authorName, progress: progress,
+          tint: _forkSheetTint,
+        ),
       if (hasAbout) ...[
         const SizedBox(height: 20),
         Text(l.aboutSection, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),

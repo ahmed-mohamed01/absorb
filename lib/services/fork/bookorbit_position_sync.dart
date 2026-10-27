@@ -519,6 +519,17 @@ extension ForkPositionSyncApi on BookOrbitApiService {
         abs: await _can('audiobookshelf_sync'),
       );
 
+  /// The bytes of [bookId]'s content files, from its detail (cached, so the
+  /// open book's own costs nothing).
+  Future<int> editionSizeBytes(int bookId) => _ps(() async {
+        var total = 0;
+        for (final f in ((await _detail('$bookId'))['files'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>()) {
+          if (f['role'] != 'primary' && f['role'] != 'content') continue;
+          total += _psInt(f['sizeBytes']) ?? 0;
+        }
+        return total;
+      });
+
   String positionSyncAbsCoverUrl(String absLibraryItemId) =>
       BookOrbitMediaProxy.instance.urlFor('/api/v1${_absPath(absLibraryItemId)}/cover');
 

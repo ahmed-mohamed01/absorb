@@ -177,6 +177,10 @@ class PositionSyncController extends ChangeNotifier {
 
   // Read-along.
   ReadAlongStatusWire readAlong = const ReadAlongStatusWire();
+
+  /// A read of [readAlong] has come back (or failed) since the pair was
+  /// last reset, so a `none` there means none.
+  bool readAlongChecked = false;
   bool readAlongMutating = false;
   List<StorytellerExistingMatchWire> existing = const [];
   List<ReadAlongLibraryWire> targetLibraries = const [];
@@ -302,14 +306,16 @@ class PositionSyncController extends ChangeNotifier {
     return s.fromBuild ? const EditionMatch(MatchSource.build) : EditionMatch(MatchSource.auto, s.score);
   }
 
-  SyncChainSide _memberSide(EditionLinkMemberWire member, bool linked) => SyncChainSide(
+  /// [progressKnown] is false for a member built from a summary that carries
+  /// no progress, so its missing progress stays unknown.
+  SyncChainSide _memberSide(EditionLinkMemberWire member, bool linked, {bool progressKnown = true}) => SyncChainSide(
         book: SyncChainBook(
           id: member.id,
           title: member.title,
           authorName: member.authorName,
           coverVersion: member.coverVersion,
           // A linked member with no progress record has not been started.
-          progress: linked ? (member.progressPercentage ?? 0) : member.progressPercentage,
+          progress: linked && progressKnown ? (member.progressPercentage ?? 0) : member.progressPercentage,
         ),
         isMember: linked,
         isThisBook: member.id == bookId,
@@ -329,8 +335,10 @@ class PositionSyncController extends ChangeNotifier {
     return picked?.bookId == c.bookId ? forBook?.pickedProgress : null;
   }
 
-  SyncChainSide _candidateSide() {
-    final c = selected;
+  /// [serverOnly] takes the server's proposal over a pick or dismissal made
+  /// in the sheet.
+  SyncChainSide _candidateSide([bool serverOnly = false]) {
+    final c = serverOnly ? forBook?.proposed : selected;
     if (c == null) return SyncChainSide.empty;
     return SyncChainSide(
       book: SyncChainBook(
@@ -340,31 +348,39 @@ class PositionSyncController extends ChangeNotifier {
         coverVersion: c.coverVersion,
         progress: _candidateProgress(c),
       ),
-      match: _matchChip,
+      match: serverOnly
+          ? (c.fromBuild ? const EditionMatch(MatchSource.build) : EditionMatch(MatchSource.auto, c.score))
+          : _matchChip,
     );
   }
 
-  SyncChainSide _counterpartSide() {
+  SyncChainSide _counterpartSide([bool serverOnly = false]) {
     final summary = link != null ? forBook?.counterpart : null;
     if (summary != null) {
       return _memberSide(
           EditionLinkMemberWire(
               id: summary.id, title: summary.title, authorName: summary.authorName, coverVersion: summary.coverVersion),
-          true);
+          true,
+          progressKnown: false);
     }
-    return _candidateSide();
+    return _candidateSide(serverOnly);
   }
 
   /// Ebook first, audiobook second, whichever page the sheet is opened from.
-  ({SyncChainSide ebook, SyncChainSide audiobook}) get sides {
+  ({SyncChainSide ebook, SyncChainSide audiobook}) get sides => _sidesFor();
+
+  ({SyncChainSide ebook, SyncChainSide audiobook}) _sidesFor([bool serverOnly = false]) {
     final m = members;
     if (m != null && (link != null || _detachedReadAlong)) {
       final linked = link != null;
       // A link with no ebook yet still proposes one.
-      return (ebook: m.text != null ? _memberSide(m.text!, linked) : _candidateSide(), audiobook: _memberSide(m.audio, linked));
+      return (
+        ebook: m.text != null ? _memberSide(m.text!, linked) : _candidateSide(serverOnly),
+        audiobook: _memberSide(m.audio, linked)
+      );
     }
     final current = SyncChainSide(book: _currentBook, isMember: link != null, isThisBook: true);
-    final counterpart = _counterpartSide();
+    final counterpart = _counterpartSide(serverOnly);
     return thisBook == SyncEdition.audiobook
         ? (ebook: counterpart, audiobook: current)
         : (ebook: current, audiobook: counterpart);
@@ -427,8 +443,13 @@ class PositionSyncController extends ChangeNotifier {
       : SyncChainBook(
           id: m.id, title: m.title, authorName: m.authorName, coverVersion: m.coverVersion, progress: m.progressPercentage);
 
-  SyncChainSnapshot get snapshot {
-    final s = sides;
+  SyncChainSnapshot get snapshot => _snapshotFor(sides);
+
+  /// The snapshot as the server has it, for listing the work's editions:
+  /// the proposed match stays whatever the sheet has picked or set aside.
+  SyncChainSnapshot get availableSnapshot => _snapshotFor(_sidesFor(true));
+
+  SyncChainSnapshot _snapshotFor(({SyncChainSide ebook, SyncChainSide audiobook}) s) {
     final ra = readAlong;
     final issue = info?.readAloudIssue;
     final output = ra.outputBook;
@@ -921,6 +942,7 @@ class PositionSyncController extends ChangeNotifier {
       if (readAlong.status == ReadAlongStatus.none || _raFailures >= _maxReadAlongFailures) _raGiveUp();
     } finally {
       if (!_disposed && req == _raReq) {
+        readAlongChecked = true;
         _raSchedule(bookId);
         _changed();
       }
@@ -939,6 +961,7 @@ class PositionSyncController extends ChangeNotifier {
     _raFailures = 0;
     _raCounterpart = null;
     readAlong = const ReadAlongStatusWire();
+    readAlongChecked = false;
     existing = const [];
   }
 
