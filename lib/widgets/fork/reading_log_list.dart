@@ -6,6 +6,9 @@ import 'reading_log_card.dart';
 const readingLogTabTitle = 'Reading log';
 const _changeColor = Color(0xFFE59B73);
 
+/// Most sessions the chart draws; past this each bar would be under a pixel.
+const _chartMax = 60;
+
 /// The full BookOrbit log. Fetching and session details belong to the host sheet.
 class ReadingLogList extends StatelessWidget {
   final List<Map<String, dynamic>> sessions;
@@ -100,10 +103,14 @@ class ReadingLogList extends StatelessWidget {
         : day == DateUtils.addDaysToDate(today, -1)
         ? 'Yesterday · '
         : '';
-    return '$prefix${DateFormat(day.year == today.year ? 'EEE, MMM d' : 'EEE, MMM d, y').format(day)}';
+    final locale = Localizations.localeOf(context).toString();
+    return '$prefix${DateFormat(day.year == today.year ? 'EEE, MMM d' : 'EEE, MMM d, y', locale).format(day)}';
   }
 
-  Widget _progress(BuildContext context, List<ReadingLogEntry> entries) {
+  Widget _progress(BuildContext context, List<ReadingLogEntry> all) {
+    // The latest sessions only: hundreds would leave no bar visible. The
+    // range, dates and legend describe the same sessions the bars do.
+    final entries = all.length > _chartMax ? all.sublist(all.length - _chartMax) : all;
     final tt = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
     final reached = entries.where((e) => e.reached != null).toList();

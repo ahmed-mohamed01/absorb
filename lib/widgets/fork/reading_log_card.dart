@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
@@ -53,9 +54,10 @@ class ReadingLogEntry {
         s['medium'] == 'listened' ||
         (audioFile && format != null);
     // BookOrbit has no read-along type: listening on an EPUB is its narration.
+    // Text to speech is listening, but not to the book's narration.
     final mode = !listened
         ? ReadingMode.read
-        : audioFile
+        : audioFile || type == 'tts'
         ? ReadingMode.listen
         : ReadingMode.readAlong;
     final ms = (s['startedAt'] as num?)?.toInt();
@@ -81,8 +83,10 @@ class ReadingLogEntry {
   };
 }
 
-const Map<String, Color> readingLogSourceColors = {
-  'absorb': Color(0xFFCAAC2F),
+/// BookOrbit's source colours; Absorb takes this phone's platform colour,
+/// since BookOrbit files its sessions under that platform.
+final Map<String, Color> readingLogSourceColors = {
+  'absorb': defaultTargetPlatform == TargetPlatform.iOS ? const Color(0xFF65C67D) : const Color(0xFFCAAC2F),
   'android': Color(0xFFCAAC2F),
   'ios': Color(0xFF65C67D),
   'watchos': Color(0xFFFF8B6D),
@@ -151,7 +155,9 @@ class ReadingLogCard extends StatelessWidget {
       letterSpacing: 1,
       fontWeight: FontWeight.w600,
     );
-    final entries = s.sessions.map(ReadingLogEntry.fromSession).toList();
+    // Newest first by start time, as BookOrbit and the full log order them.
+    final entries = s.sessions.map(ReadingLogEntry.fromSession).toList()
+      ..sort((a, b) => (b.startedAt?.millisecondsSinceEpoch ?? 0).compareTo(a.startedAt?.millisecondsSinceEpoch ?? 0));
 
     if (entries.isEmpty) {
       return Container(
@@ -163,7 +169,8 @@ class ReadingLogCard extends StatelessWidget {
           children: [
             Text(_title.toUpperCase(), style: heading),
             const SizedBox(height: 8),
-            if (s.loading && !s.failed)
+            // Saved totals can arrive before the sessions they count.
+          if (!s.failed && (s.loading || s.mySessions > 0))
               const LinearProgressIndicator(minHeight: 2)
             else
               Text(
@@ -326,7 +333,7 @@ class ReadingLogCard extends StatelessWidget {
     String label(DateTime? d) =>
         d == null ? '' : (sameDay ? time(context, d) : day(context, d));
     final used = readingLogSourceColors.keys
-        .where((k) => shown.any((e) => _dotSource(e) == k))
+        .where((k) => shown.any((e) => e.source == k))
         .toList();
     final small = tt.labelSmall?.copyWith(color: muted, fontSize: 10);
     final legend = Wrap(
@@ -382,10 +389,6 @@ class ReadingLogCard extends StatelessWidget {
       ]);
     });
   }
-
-  /// The chart's legend names BookOrbit's buckets; only rows say Absorb.
-  static String _dotSource(ReadingLogEntry e) =>
-      e.source == 'absorb' ? 'android' : e.source;
 
   static TextStyle? _changeStyle(TextTheme tt) => tt.bodySmall?.copyWith(
     color: _changeColor,
@@ -532,7 +535,7 @@ class ReadingLogCard extends StatelessWidget {
     final locale = Localizations.localeOf(context).toString();
     return MediaQuery.alwaysUse24HourFormatOf(context)
         ? DateFormat.Hm(locale).format(d)
-        : DateFormat('h:mm', locale).format(d);
+        : DateFormat.jm(locale).format(d);
   }
 
   /// Today, Yesterday, the weekday within a week, else the date.
@@ -708,9 +711,13 @@ class _ProgressPainter extends CustomPainter {
     final path = Path();
     var started = false;
     final n = entries.length;
+    // A session with no position keeps the line at the last one known, so
+    // the line still reaches the newest session.
+    double? known;
     for (var i = 0; i < n; i++) {
-      final p = entries[i].reached;
+      final p = entries[i].reached ?? known;
       if (p == null) continue;
+      known = p;
       final pt = Offset(
         (i + 0.5) / n * size.width,
         size.height * (1 - p.clamp(0, 100) / 100),

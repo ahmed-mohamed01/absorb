@@ -147,6 +147,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   /// Forget everything cached for the signed-in account.
   static void clearCaches() {
     _ebookReadCards.clear();
+    _forkReadingStats.clear();
     _manifests.clear();
     _manifestAt.clear();
     _details.clear();
@@ -4720,7 +4721,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         if (source != null) 'source': source,
         ...await _clientName(),
       });
-      await _rememberSessionDevice(itemId, _iso(startedAt));
+      if (_forkFirstSend(sessionId)) await _rememberSessionDevice(itemId, _iso(startedAt));
       return true;
     } catch (e) {
       debugPrint('[BookOrbit] reading time for $itemId not logged: $e');
@@ -5131,14 +5132,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         started == null ? when.subtract(Duration(seconds: listened.round())) : DateTime.fromMillisecondsSinceEpoch(started),
       )..listenedSeconds = listened;
       final manifest = _manifests[_key(bookId)] ?? await _manifest(bookId);
-      var total = manifest == null ? 0.0 : BookOrbitMapper.totalSeconds(manifest);
-      // A narrated EPUB has no audiobook; its length is the narration's.
-      // Without one the session went up with no start or end point.
-      if (manifest == null) {
-        try {
-          total = (await _narration(bookId))?.overlay.duration ?? 0.0;
-        } catch (_) {}
-      }
+      final total = await _forkBookSeconds(bookId, manifest);
       final startTime = (session['startTime'] as num?)?.toDouble();
       if (total > 0 && currentTime != null) s.lastPercent = (currentTime / total * 100).clamp(0.0, 100.0);
       if (total > 0 && startTime != null) s.startPercent = (startTime / total * 100).clamp(0.0, 100.0);
