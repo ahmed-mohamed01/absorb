@@ -39,6 +39,7 @@ import '../widgets/section_labels.dart';
 import 'app_shell.dart';
 import '../l10n/app_localizations.dart';
 import '../utils/duration_format.dart';
+import '../services/api_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -216,7 +217,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   String? _coversLibraryId;
 
   Future<void> _loadSettings() async {
-    final libId = mounted ? context.read<LibraryProvider>().selectedLibraryId : null;
+    final lib = mounted ? context.read<LibraryProvider>() : null;
+    final libId = lib?.homeDashboard == true ? BookOrbitApiService.dashboardLibraryId : lib?.selectedLibraryId;
     _coversLibraryId = libId;
     final results = await Future.wait([
       PlayerSettings.getHideEbookOnly(),
@@ -450,8 +452,9 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
     final allLibraries = lib.libraries;
     final libraryName = lib.homeDashboard ? 'Dashboard' : lib.selectedLibrary?['name'] as String? ?? l.libraryFallback;
     // Cover shape can differ per library; re-resolve after a library switch.
-    if (lib.selectedLibraryId != _coversLibraryId) {
-      _coversLibraryId = lib.selectedLibraryId;
+    final homeLibId = lib.homeDashboard ? BookOrbitApiService.dashboardLibraryId : lib.selectedLibraryId;
+    if (homeLibId != _coversLibraryId) {
+      _coversLibraryId = homeLibId;
       PlayerSettings.getRectangleCoversFor(_coversLibraryId).then((v) {
         if (mounted && v != _rectangleCovers) setState(() => _rectangleCovers = v);
       });
@@ -606,7 +609,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                           borderRadius: BorderRadius.circular(20),
                           clipBehavior: Clip.antiAlias,
                           child: InkWell(
-                            onTap: () => showLibraryPickerSheet(context, lib, forHome: true),
+                            onTap: lib.homeDashboard ? null : () => showLibraryPickerSheet(context, lib),
                             borderRadius: BorderRadius.circular(20),
                             child: Container(
                               padding: const EdgeInsets.symmetric(
@@ -638,9 +641,11 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                                           overflow: TextOverflow.ellipsis,
                                           maxLines: 1),
                                     ),
-                                    const SizedBox(width: 4),
-                                    Icon(Icons.unfold_more_rounded,
-                                        size: 18, color: cs.onSurfaceVariant),
+                                    if (!lib.homeDashboard) ...[
+                                      const SizedBox(width: 4),
+                                      Icon(Icons.unfold_more_rounded,
+                                          size: 18, color: cs.onSurfaceVariant),
+                                    ],
                                   ],
                                 ),
                               ),

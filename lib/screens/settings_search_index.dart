@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/widgets.dart';
 import '../l10n/app_localizations.dart';
 import '../services/wording.dart';
+import '../services/fork/library_flow.dart';
 
 class SettingSearchEntry {
   final String sectionId;    // exact string passed to _keyFor(...)
@@ -48,7 +49,9 @@ List<SettingSearchEntry> settingsSearchEntries(BuildContext context) {
     SettingSearchEntry('Absorbing Cards', w.sectionAbsorbingCards, l.cardScrubbers, [l.cardScrubbersBothSubtitle, l.cardScrubbersChapterSubtitle, l.cardScrubbersLockedSubtitle]),
     SettingSearchEntry('Absorbing Cards', w.sectionAbsorbingCards, l.speedAdjustedTime, [l.speedAdjustedTimeOnSubtitle, l.speedAdjustedTimeOffSubtitle]),
     SettingSearchEntry('Absorbing Cards', w.sectionAbsorbingCards, l.keepScreenOnPlayer, [l.keepScreenOnPlayerSubtitle]),
-    SettingSearchEntry('Absorbing Cards', w.sectionAbsorbingCards, w.mergeLibraries, [w.mergeLibrariesOnSubtitle, w.mergeLibrariesOffSubtitle, l.settingsMergeImpliedByPodcastTab]),
+    // BookOrbit hides the toggle, so the search must not lead to it.
+    if (!ForkLibraryFlow.unifiedAbsorbing)
+      SettingSearchEntry('Absorbing Cards', w.sectionAbsorbingCards, w.mergeLibraries, [w.mergeLibrariesOnSubtitle, w.mergeLibrariesOffSubtitle, l.settingsMergeImpliedByPodcastTab]),
     SettingSearchEntry('Absorbing Cards', w.sectionAbsorbingCards, l.queueMode, [l.queueModeMergedSubtitle, l.queueModeBooks, l.queueModePodcasts, l.queueModeOff, l.queueModeManual, l.queueModeAuto, l.queueModeSeriesLabel, l.queueModeShowLabel, l.queueModePlaylist]),
     SettingSearchEntry('Absorbing Cards', w.sectionAbsorbingCards, l.autoDownloadQueue, [l.autoDownloadQueueOffSubtitle]),
     SettingSearchEntry('Absorbing Cards', w.sectionAbsorbingCards, l.resetButtonGrid, const []),

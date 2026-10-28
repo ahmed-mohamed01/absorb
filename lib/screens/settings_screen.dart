@@ -64,6 +64,7 @@ import '../widgets/server_admin_status_badges.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/sign_in_again.dart';
 import '../widgets/fork/watchlist_settings.dart';
+import '../services/fork/library_flow.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -2731,6 +2732,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         PlayerSettings.setKeepScreenOnInPlayer(v);
                       } : null,
                     ),
+                    if (!ForkLibraryFlow.unifiedAbsorbing) ...[
                     const Divider(height: 1, indent: 16, endIndent: 16),
                     ValueListenableBuilder<bool>(
                       valueListenable: classicWordingNotifier,
@@ -2761,6 +2763,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         );
                       },
                     ),
+                    ],
                     const Divider(height: 1, indent: 16, endIndent: 16),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -2802,7 +2805,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ]),
                         const SizedBox(height: 8),
                         // When libraries are merged, show a single unified control
-                        if (_mergeAbsorbingLibraries || _podcastTabEnabled) ...[
+                        if (_mergeAbsorbingLibraries || _podcastTabEnabled || ForkLibraryFlow.unifiedAbsorbing) ...[
                           Text(l.queueModeMergedSubtitle,
                             style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
                           const SizedBox(height: 8),

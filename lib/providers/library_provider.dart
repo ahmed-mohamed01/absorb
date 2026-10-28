@@ -33,6 +33,7 @@ import '../services/ebook_cache.dart';
 import '../services/screen_wake.dart';
 import '../services/up_next_narration.dart';
 import '../services/narrated_books.dart';
+import '../services/fork/library_flow.dart';
 
 part '_lp_state.dart';
 part '_lp_core.dart';
@@ -129,6 +130,7 @@ class LibraryProvider extends ChangeNotifier
     }
     final wasAuthenticated = _auth?.isAuthenticated ?? false;
     _auth = auth;
+    ForkLibraryFlow.unifiedAbsorbing = auth.apiService?.isBookOrbit == true;
 
     if (auth.isAuthenticated) {
       final isFreshLogin = !wasAuthenticated;
@@ -437,7 +439,10 @@ class LibraryProvider extends ChangeNotifier
       _selectedLibraryId = null;
       return;
     }
-    final savedId = await ScopedPrefs.getString('last_selected_library');
+    final savedId = ForkLibraryFlow.restoreLibraryId(
+      saved: await ScopedPrefs.getString('last_selected_library'),
+      lastBook: await ScopedPrefs.getString('last_book_library'),
+    );
     final defaultId = _auth?.defaultLibraryId;
     if (savedId != null && _libraries.any((l) => l['id'] == savedId)) {
       _selectedLibraryId = savedId;
@@ -490,9 +495,14 @@ class LibraryProvider extends ChangeNotifier
     _collections = [];
     await ScopedPrefs.setString('last_selected_library', libraryId);
     await _rememberBookLibrary(libraryId);
-    await _loadSectionPrefs();
+    if (!homeDashboard) await _loadSectionPrefs();
     notifyListeners();
-    await loadPersonalizedView(force: true);
+    if (homeDashboard) {
+      unawaited(loadPlaylists());
+      unawaited(loadCollections());
+    } else {
+      await loadPersonalizedView(force: true);
+    }
     AndroidAutoService().refresh(force: true);
     CarPlayService().refreshTemplates();
   }
@@ -507,16 +517,16 @@ class LibraryProvider extends ChangeNotifier
     _series = [];
     _playlists = [];
     _collections = [];
-    _personalizedSections = _sectionsByLibrary[libraryId] ?? [];
+    if (!homeDashboard) _personalizedSections = _sectionsByLibrary[libraryId] ?? [];
     await ScopedPrefs.setString('last_selected_library', libraryId);
     await _rememberBookLibrary(libraryId);
-    await _loadSectionPrefs();
+    if (!homeDashboard) await _loadSectionPrefs();
     notifyListeners();
     // The shelves can come from the cache without a fetch, and playlists
     // and collections were just cleared, so they load either way.
     unawaited(loadPlaylists());
     unawaited(loadCollections());
-    await loadPersonalizedView();
+    if (!homeDashboard) await loadPersonalizedView();
     AndroidAutoService().refresh(force: true);
     CarPlayService().refreshTemplates();
   }

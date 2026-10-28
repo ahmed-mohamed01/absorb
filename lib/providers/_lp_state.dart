@@ -10,7 +10,6 @@ mixin _StateMixin on ChangeNotifier {
   List<dynamic> _libraries = [];
   bool _librariesFromCache = false;
   String? _selectedLibraryId;
-  bool _homeDashboard = false;
   List<dynamic> _personalizedSections = [];
   // Books and series just taken off the Continue shelves, kept off them
   // until the server's own lists catch up.
@@ -139,9 +138,9 @@ mixin _StateMixin on ChangeNotifier {
   List<dynamic> get libraries => _libraries;
   String? get selectedLibraryId => _selectedLibraryId;
 
-  /// Home can show every BookOrbit library at once while the Library tab
-  /// keeps browsing the selected one.
-  bool get homeDashboard => _homeDashboard && canShowDashboard;
+  /// Home is the Dashboard whenever the server can show one, while the
+  /// Library tab keeps browsing the selected library.
+  bool get homeDashboard => canShowDashboard;
   String? get _homeLibId => homeDashboard ? BookOrbitApiService.dashboardLibraryId : _selectedLibraryId;
 
   bool get canShowDashboard =>

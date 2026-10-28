@@ -2631,9 +2631,11 @@ class SessionDetailsSheetState extends State<SessionDetailsSheet> {
 
     // Switch library selection if session is from a different library.
     // selectLibrary stops playback itself, so call it BEFORE playItem.
+    // With merged libraries the card stays visible, so no switch is needed.
     final sessionLibraryId = s['libraryId'] as String?;
     if (sessionLibraryId != null &&
-        sessionLibraryId != lib.selectedLibraryId) {
+        sessionLibraryId != lib.selectedLibraryId &&
+        !await PlayerSettings.getMergeAbsorbingLibraries()) {
       await lib.selectLibrary(sessionLibraryId);
     }
 

@@ -1275,6 +1275,8 @@ class _AppShellState extends State<AppShell>
       case 'switchLibrary':
         final lib = context.read<LibraryProvider>();
         if (lib.libraries.length < 2) return;
+        // Home has no library to switch, so the picker lands on the Library tab.
+        if (lib.homeDashboard && _currentIndex == 0) _navigateTo(1);
         showLibraryPickerSheet(context, lib);
       case 'bookmarks':
         Navigator.push(context,

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'narrated_books.dart';
 import 'scoped_prefs.dart';
 import '../widgets/card_button_config.dart';
+import 'fork/library_flow.dart';
 
 typedef QueueModeSnapshot = ({
   String bookMode,
@@ -347,7 +348,9 @@ class PlayerSettings {
   // the tab-driven library flips and the Absorbing tab must keep showing the
   // playing item from either tab.
   static Future<bool> getMergeAbsorbingLibraries() async =>
-      await _get('mergeAbsorbingLibraries', false) || await getPodcastTabEnabled();
+      await _get('mergeAbsorbingLibraries', false) || await getPodcastTabEnabled() ||
+      // BookOrbit keeps Absorbing and playback unified across libraries.
+      ForkLibraryFlow.unifiedAbsorbing;
   /// The stored toggle value, without the Podcasts-tab implication. For the
   /// settings UI and backups - exporting the effective value would bake
   /// merge=true into a restore permanently.

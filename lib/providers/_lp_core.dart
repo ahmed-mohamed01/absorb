@@ -448,9 +448,12 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   }
 
   void _buildOfflineSections() {
-    final isPodcast = isPodcastLibrary;
+    // The Dashboard is books, whatever the Library tab shows.
+    final isPodcast = !homeDashboard && isPodcastLibrary;
     final allDownloads = DownloadService().downloadedItems;
     final downloads = allDownloads.where((dl) {
+      // The Dashboard shows every library's downloads.
+      if (homeDashboard) return true;
       final libraryId = dl.libraryId;
       if (libraryId != null &&
           libraryId.isNotEmpty &&
@@ -464,6 +467,8 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         ? const <DownloadInfo>[]
         : DownloadService().keptEbooks.where((k) {
             if (downloadedIds.contains(k.itemId)) return false;
+            // The Dashboard shows every library's downloads.
+            if (homeDashboard) return true;
             final libraryId = k.libraryId;
             if (libraryId != null &&
                 libraryId.isNotEmpty &&
@@ -603,9 +608,12 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   }
 
   void _injectDownloadedSection() {
-    final isPodcast = isPodcastLibrary;
+    // The Dashboard is books, whatever the Library tab shows.
+    final isPodcast = !homeDashboard && isPodcastLibrary;
     final allDownloads = DownloadService().downloadedItems;
     final downloads = allDownloads.where((dl) {
+      // The Dashboard shows every library's downloads.
+      if (homeDashboard) return true;
       final libraryId = dl.libraryId;
       if (libraryId != null &&
           libraryId.isNotEmpty &&
@@ -1963,17 +1971,8 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   // ── Personalized home view ──
 
   void _resetHomeDashboard() {
-    _homeDashboard = false;
     _sectionsByLibrary.remove(BookOrbitApiService.dashboardLibraryId);
     _sectionsFetchedAt.remove(BookOrbitApiService.dashboardLibraryId);
-  }
-
-  Future<void> setHomeDashboard(bool value) async {
-    if (_homeDashboard == value || (value && !canShowDashboard)) return;
-    _homeDashboard = value;
-    _personalizedSections = _sectionsByLibrary[_homeLibId] ?? [];
-    notifyListeners();
-    await loadPersonalizedView(force: true);
   }
 
   Future<void> loadPersonalizedView({bool force = false}) async {
@@ -2555,7 +2554,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   // ── Section customization ──
 
   Future<void> _loadSectionPrefs() async {
-    final libId = _selectedLibraryId ?? '';
+    final libId = _homeLibId ?? '';
     final orderJson = await ScopedPrefs.getStringList('home_section_order_$libId');
     final hiddenJson = await ScopedPrefs.getStringList('home_hidden_sections_$libId');
     _sectionOrder = orderJson.toList();
@@ -2576,7 +2575,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   }
 
   Future<void> _saveSectionPrefs() async {
-    final libId = _selectedLibraryId ?? '';
+    final libId = _homeLibId ?? '';
     await ScopedPrefs.setStringList('home_section_order_$libId', _sectionOrder);
     await ScopedPrefs.setStringList('home_hidden_sections_$libId', _hiddenSectionIds.toList());
   }
@@ -2607,10 +2606,10 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   Set<String> get addedGenres => _addedGenres;
 
   Future<void> _fetchGenreSectionItems(String genre) async {
-    if (_api == null || _selectedLibraryId == null) return;
+    if (_api == null || _homeLibId == null) return;
     final filterValue = base64Encode(utf8.encode(genre));
     final data = await _api!.getLibraryItems(
-      _selectedLibraryId!,
+      _homeLibId!,
       filter: 'genres.$filterValue',
       limit: 20,
       sort: 'addedAt',
@@ -2625,7 +2624,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   Future<void> addGenreSection(String genre) async {
     if (_addedGenres.contains(genre)) return;
     _addedGenres.add(genre);
-    final libId = _selectedLibraryId ?? '';
+    final libId = _homeLibId ?? '';
     await ScopedPrefs.setStringList('home_genre_sections_$libId', _addedGenres.toList());
     await _fetchGenreSectionItems(genre);
     notifyListeners();
@@ -2637,7 +2636,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     final sectionId = 'genre:$genre';
     _sectionOrder.remove(sectionId);
     _hiddenSectionIds.remove(sectionId);
-    final libId = _selectedLibraryId ?? '';
+    final libId = _homeLibId ?? '';
     await ScopedPrefs.setStringList('home_genre_sections_$libId', _addedGenres.toList());
     await _saveSectionPrefs();
     notifyListeners();
@@ -2652,7 +2651,8 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       allSections[id] = Map<String, dynamic>.from(s);
     }
 
-    for (final p in _playlists) {
+    // Lists belong to the Library tab's library, not the Dashboard.
+    if (!homeDashboard) for (final p in _playlists) {
       final pm = p as Map<String, dynamic>;
       final id = 'playlist:${pm['id']}';
       allSections[id] = {
@@ -2664,7 +2664,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       };
     }
 
-    for (final c in _collections) {
+    if (!homeDashboard) for (final c in _collections) {
       final cm = c as Map<String, dynamic>;
       final id = 'collection:${cm['id']}';
       allSections[id] = {

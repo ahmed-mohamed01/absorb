@@ -31,7 +31,6 @@ String? libraryPickerSubtitle(
   Map<String, dynamic>? dockSummary,
   int? watchlistUpcoming,
 }) {
-  if (library['dashboard'] == true) return 'Every library at once';
   if (library['bookDock'] == true) return bookDockSubtitle(dockSummary);
   if (library['watchlist'] == true) return watchlistSubtitle(library, upcoming: watchlistUpcoming);
   final n = _count(library['bookCount']);

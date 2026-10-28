@@ -237,7 +237,8 @@ class _HomeCustomizeSheetState extends State<HomeCustomizeSheet> {
             fontWeight: FontWeight.w600, color: cs.onSurface,
           )),
           const Spacer(),
-          GestureDetector(
+          // The Dashboard has no library to take a genre from.
+          if (!lib.homeDashboard) GestureDetector(
             onTap: () => _showAddGenre(context, lib, cs, tt),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),

@@ -19,13 +19,12 @@ import 'library_picker_model.dart';
 import 'watchlist_picker_badge.dart';
 
 /// The sheet body for `showLibraryPickerSheet`: [libraries] are the rows in
-/// order (the Dashboard entry first when Home shows it). Picking one closes
-/// the sheet and switches to it the way the picker always has.
+/// order. Picking one closes the sheet and switches the Library tab to it
+/// the way the picker always has.
 Widget forkLibraryPicker(
   BuildContext ctx,
   List<Map<String, dynamic>> libraries,
   LibraryProvider lib, {
-  required bool forHome,
   required AppLocalizations l,
 }) {
   final api = ctx.read<AuthProvider>().apiService;
@@ -33,18 +32,10 @@ Widget forkLibraryPicker(
     libraries: libraries,
     title: l.selectLibrary,
     fallbackName: l.libraryFallback,
-    isSelected: (library) => library['dashboard'] == true
-        ? lib.homeDashboard
-        : library['id'] == lib.selectedLibraryId && !(forHome && lib.homeDashboard),
+    isSelected: (library) => library['id'] == lib.selectedLibraryId,
     onPick: (library, selected) {
       Navigator.pop(ctx);
-      if (library['dashboard'] == true) {
-        lib.setHomeDashboard(true);
-      } else if (!selected) {
-        if (forHome) lib.setHomeDashboard(false);
-        final id = library['id'] as String;
-        if (id != lib.selectedLibraryId) lib.selectLibrary(id);
-      }
+      if (!selected) lib.selectLibrary(library['id'] as String);
     },
     dockSummary: api is BookOrbitApiService ? api.forkDockSummary : null,
     watchlistUpcoming: api is BookOrbitApiService ? api.forkWatchlistUpcoming : null,

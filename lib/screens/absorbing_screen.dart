@@ -606,7 +606,8 @@ class _AbsorbingScreenState extends State<AbsorbingScreen> {
     _lastOrientation = mq.orientation;
 
     // Reset carousel to first card when library changes
-    if (lib.selectedLibraryId != _lastSeenLibraryId && _lastSeenLibraryId != null) {
+    // Merged cards do not change on a library switch, so the carousel stays put.
+    if (!_mergeLibraries && lib.selectedLibraryId != _lastSeenLibraryId && _lastSeenLibraryId != null) {
       if (_pageController.hasClients) {
         _pageController.jumpToPage(0);
       }

@@ -38,10 +38,6 @@ void main() {
       expect(libraryPickerSubtitle({'mediaType': 'podcast'}), isNull);
     });
 
-    test('the dashboard says what it is', () {
-      expect(libraryPickerSubtitle({'dashboard': true}), 'Every library at once');
-    });
-
     test('the Book Dock says what needs the user first', () {
       expect(libraryPickerSubtitle({'bookDock': true}), isNull);
       expect(bookDockSubtitle({'needsReview': 3, 'error': 1, 'readyToFile': 2}), '3 files need review');

@@ -10,9 +10,8 @@ import 'fork/watchlist_picker_badge.dart';
 /// library is hidden here - the tab is its only surface.
 Future<void> showLibraryPickerSheet(
   BuildContext context,
-  LibraryProvider lib, {
-  bool forHome = false,
-}) async {
+  LibraryProvider lib,
+) async {
   String? excludeLibraryId;
   if (await PlayerSettings.getPodcastTabEnabled()) {
     final id = await PlayerSettings.getPodcastTabLibraryId();
@@ -27,11 +26,6 @@ Future<void> showLibraryPickerSheet(
       .whereType<Map<String, dynamic>>()
       .where((library) => library['id'] != excludeLibraryId)
       .toList();
-  final showDashboard = forHome && lib.canShowDashboard;
-  const dashboardId = 'dashboard';
-  if (showDashboard) {
-    allLibraries.insert(0, {'id': dashboardId, 'name': 'Dashboard', 'dashboard': true});
-  }
 
   showModalBottomSheet(
     context: context,
@@ -39,7 +33,7 @@ Future<void> showLibraryPickerSheet(
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     builder: (ctx) {
-      return forkLibraryPicker(ctx, allLibraries, lib, forHome: forHome, l: l);
+      return forkLibraryPicker(ctx, allLibraries, lib, l: l);
       // ignore: dead_code
       final bottomPad = MediaQuery.of(ctx).viewPadding.bottom;
       return Container(
@@ -83,15 +77,10 @@ Future<void> showLibraryPickerSheet(
                   final id = library['id'] as String;
                   final name = library['name'] as String? ?? l.libraryFallback;
                   final mediaType = library['mediaType'] as String? ?? 'book';
-                  final isDashboard = library['dashboard'] == true;
-                  final isSelected = isDashboard
-                      ? lib.homeDashboard
-                      : id == lib.selectedLibraryId && !(forHome && lib.homeDashboard);
+                  final isSelected = id == lib.selectedLibraryId;
                   return ListTile(
                     leading: Icon(
-                      isDashboard
-                          ? Icons.dashboard_rounded
-                          : library['bookDock'] == true
+                      library['bookDock'] == true
                           ? Icons.move_to_inbox_rounded
                           : library['watchlist'] == true
                           ? Icons.visibility_rounded
@@ -107,12 +96,7 @@ Future<void> showLibraryPickerSheet(
                     selected: isSelected,
                     onTap: () {
                       Navigator.pop(ctx);
-                      if (isDashboard) {
-                        lib.setHomeDashboard(true);
-                      } else if (!isSelected) {
-                        if (forHome) lib.setHomeDashboard(false);
-                        if (id != lib.selectedLibraryId) lib.selectLibrary(id);
-                      }
+                      if (!isSelected) lib.selectLibrary(id);
                     },
                   );
                 },
