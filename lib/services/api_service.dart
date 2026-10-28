@@ -36,6 +36,7 @@ part 'fork/bookorbit_position_sync.dart';
 part 'fork/bookorbit_watchlist.dart';
 part 'fork/bookorbit_perf.dart';
 part 'fork/bookorbit_reading_log.dart';
+part 'fork/bookorbit_library_picker.dart';
 
 /// Outcome of a local-session upsert. [serverTooOld] flags a 404/501 (the
 /// server predates /api/session/local) so the caller can fall back to the

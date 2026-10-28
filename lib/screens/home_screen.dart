@@ -22,6 +22,7 @@ import '../widgets/desktop_batch_actions.dart';
 import '../widgets/home_section.dart';
 import '../widgets/absorb_page_header.dart';
 import '../widgets/library_picker_sheet.dart';
+import '../widgets/fork/library_icon.dart';
 import '../widgets/shimmer.dart';
 import '../widgets/book_detail_sheet.dart';
 import '../widgets/card_buttons.dart';
@@ -621,10 +622,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(
-                                        lib.isPodcastLibrary
-                                            ? Icons.podcasts_rounded
-                                            : Icons.auto_stories_rounded,
+                                    ForkLibraryIcon(
+                                        library: lib.homeDashboard ? const {'dashboard': true} : lib.selectedLibrary,
                                         size: 18,
                                         color: cs.onSurfaceVariant),
                                     const SizedBox(width: 6),

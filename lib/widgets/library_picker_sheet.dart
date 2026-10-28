@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../providers/library_provider.dart';
 import '../services/player_settings.dart';
+import 'fork/library_picker.dart';
 import 'fork/watchlist_picker_badge.dart';
 
 /// Bottom-sheet library switcher shared by the Home/Library headers and the
@@ -38,6 +39,8 @@ Future<void> showLibraryPickerSheet(
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     builder: (ctx) {
+      return forkLibraryPicker(ctx, allLibraries, lib, forHome: forHome, l: l);
+      // ignore: dead_code
       final bottomPad = MediaQuery.of(ctx).viewPadding.bottom;
       return Container(
         constraints: BoxConstraints(

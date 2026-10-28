@@ -1,7 +1,7 @@
 // Fork-owned: the "N needs you" pill on the Watchlist row of the library
 // picker. The count rides on the library map (`watchlistNeedsYou`), fetched
-// with the Watchlist summary. Hooked from library_picker_sheet.dart. See
-// FORK_NOTES.md.
+// with the Watchlist summary. Drawn by lib/widgets/fork/library_picker.dart.
+// See FORK_NOTES.md.
 import 'package:flutter/material.dart';
 
 import 'watchlist_cover_badges.dart';
@@ -10,9 +10,10 @@ import 'watchlist_cover_badges.dart';
 Widget? watchlistPickerTitle(Map<String, dynamic> library, String name) {
   final count = (library['watchlistNeedsYou'] as num?)?.toInt() ?? 0;
   if (library['watchlist'] != true || count <= 0) return null;
-  return Row(children: [
-    Flexible(child: Text(name, overflow: TextOverflow.ellipsis)),
-    const SizedBox(width: 8),
+  // A Wrap, so with large text or a long name the pill drops under the name
+  // instead of overflowing the row.
+  return Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, runSpacing: 4, children: [
+    Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
     Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(

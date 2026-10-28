@@ -16,6 +16,7 @@ import '../services/download_service.dart';
 import '../services/audio_player_service.dart';
 import '../widgets/absorb_page_header.dart';
 import '../widgets/library_picker_sheet.dart';
+import '../widgets/fork/library_icon.dart';
 import '../widgets/library_search_results.dart';
 import '../widgets/podcast_episode_feed.dart';
 import '../main.dart' show flatNotifier, gradientIntensityNotifier;
@@ -3181,10 +3182,8 @@ class LibraryScreenState extends State<LibraryScreen>
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(
-                                      lib.isPodcastLibrary
-                                          ? Icons.podcasts_rounded
-                                          : Icons.auto_stories_rounded,
+                                    ForkLibraryIcon(
+                                      library: lib.selectedLibrary,
                                       size: 18,
                                       color: cs.onSurfaceVariant,
                                     ),

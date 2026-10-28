@@ -206,11 +206,7 @@ extension _ForkBookOrbitWatchlist on BookOrbitApiService {
     if (hit != null && DateTime.now().difference(hit.at) < _watchSummaryTtl) return hit.summary;
     // Asked alongside the summary for the library picker's badge; it counts
     // formats, the way the server's release list does.
-    final needsYou = _boGet('/monitored/releases', {'status': 'needs_attention', 'page': 0, 'size': 1}, _watchSummaryTimeout)
-        .then<int?>((r) => ((r as Map)['total'] as num?)?.toInt(), onError: (Object e) {
-      debugPrint('[Watchlist] needs-you count: $e');
-      return null;
-    });
+    final needsYou = _watchReleaseTotal('needs_attention', 'needs-you');
     try {
       final s = await _boGet('/monitored', null, _watchSummaryTimeout) as Map<String, dynamic>;
       s['watchlistNeedsYou'] = await needsYou ?? 0;
@@ -231,6 +227,16 @@ extension _ForkBookOrbitWatchlist on BookOrbitApiService {
       return null;
     }
   }
+
+  /// The server's count of releases with [status] (formats, the way its
+  /// release list counts them), or null when it cannot be read. [what] names
+  /// the count in the log. Shared with the library picker's upcoming count.
+  Future<int?> _watchReleaseTotal(String status, String what) =>
+      _boGet('/monitored/releases', {'status': status, 'page': 0, 'size': 1}, _watchSummaryTimeout)
+          .then<int?>((r) => ((r as Map)['total'] as num?)?.toInt(), onError: (Object e) {
+        debugPrint('[Watchlist] $what count: $e');
+        return null;
+      });
 
   /// Called with the raw `/libraries` answer before it is mapped.
   void _watchKeepLibraryRoots(List<dynamic> raw) {
@@ -256,6 +262,7 @@ extension _ForkBookOrbitWatchlist on BookOrbitApiService {
       'settings': {'coverAspectRatio': 0},
       'watchlist': true,
       'watchlistNeedsYou': summary['watchlistNeedsYou'] ?? 0,
+      'watchlistAuthors': summary['authors'],
     };
   }
 

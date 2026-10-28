@@ -75,7 +75,7 @@ class BookOrbitMapper {
       'id': _str(lib['id']),
       'name': lib['name'] ?? '',
       'displayOrder': lib['displayOrder'] ?? 0,
-      'icon': 'database',
+      'icon': lib['icon'] ?? 'database',
       'mediaType': type == 'podcasts' ? 'podcast' : 'book',
       'provider': 'audible',
       'folders': const [],
