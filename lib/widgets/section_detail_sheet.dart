@@ -14,6 +14,8 @@ import 'episode_detail_sheet.dart';
 import 'absorb_placement.dart';
 import 'swipe_action.dart';
 import 'stackable_sheet.dart';
+import 'fork/shelf_cover_frames.dart';
+import 'fork/shelf_sheet_frame.dart';
 
 /// Open the right detail sheet for a section entity: episode detail for
 /// podcast entries (which carry a `recentEpisode`), book detail otherwise.
@@ -57,15 +59,15 @@ class SectionDetailSheet extends StatefulWidget {
     showStackableSheet(
       context: context,
       useSafeArea: true,
-      showHandle: true,
+      showHandle: false, // Fork: ForkShelfSheetFrame draws it on Home's gradient
       maxChildSize: 0.95,
-      builder: (context, scrollController) => SectionDetailSheet(
+      builder: (context, scrollController) => ForkShelfSheetFrame(child: SectionDetailSheet(
         title: title,
         icon: icon,
         entities: entities,
         coverAspectRatio: coverAspectRatio,
         scrollController: scrollController,
-      ),
+      )),
     );
   }
 
@@ -130,6 +132,7 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
   }
 
   Widget _buildList(ColorScheme cs, TextTheme tt, LibraryProvider lib, AppLocalizations l) {
+    final frames = ForkShelfFrames(widget.entities, widget.coverAspectRatio, dashboard: lib.homeDashboard); // Fork: each book's own shape
     return ListView.builder(
       controller: widget.scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4)
@@ -178,8 +181,8 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
               child: SizedBox(
                 height: 112,
                 child: Row(children: [
-                  AspectRatio(
-                    aspectRatio: widget.coverAspectRatio,
+                  ForkShelfCover( // Fork: each book's own shape
+                    frames: frames, item: item,
                     child: Stack(children: [
                       Positioned.fill(child: _cover(coverUrl, lib, cs)),
                       if (isExplicit) _explicitBadge(l),
@@ -241,7 +244,8 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
   }
 
   Widget _buildGrid(ColorScheme cs, TextTheme tt, LibraryProvider lib, AppLocalizations l) {
-    final isRect = widget.coverAspectRatio < 1.0;
+    final frames = ForkShelfFrames(widget.entities, widget.coverAspectRatio, dashboard: lib.homeDashboard); // Fork: each book's own shape
+    final isRect = frames.hasPortrait; // Fork: from the books' shapes
     // Text area is ~50px; cover uses aspect ratio to determine height
     final childAspectRatio = isRect ? 0.45 : 0.62;
 
@@ -287,8 +291,8 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              AspectRatio(
-                aspectRatio: widget.coverAspectRatio,
+              ForkShelfCover( // Fork: each book's own shape
+                frames: frames, item: item,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: Stack(children: [

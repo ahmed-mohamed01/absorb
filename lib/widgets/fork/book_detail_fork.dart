@@ -364,10 +364,7 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
     return (primary: primaryButton, secondary: secondaryButton);
   }
 
-  double? get _itemFrame {
-    final f = (_item?['media'] as Map?)?['coverAspectRatio'];
-    return f is num ? f.toDouble() : null;
-  }
+  double? get _itemFrame => forkBookFrame(_item);
 
   Widget _secondaryIconButton(Color accent, IconData icon, VoidCallback? onTap, {double progress = 0, String? tooltip}) {
     final showFill = progress > 0 && progress < 1;

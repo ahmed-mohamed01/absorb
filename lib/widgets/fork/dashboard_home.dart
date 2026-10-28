@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../services/api_service.dart';
 
+export '../../services/fork/cover_frame.dart';
+
 // Fork-owned: the chrome of the Dashboard Home, which is the dimmed footer
 // under the last shelf and the helpers that give Home's shelves their titles
 // and icons. Hooked in from home_screen.dart; see FORK_NOTES.md. Its text is

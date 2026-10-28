@@ -72,12 +72,7 @@ class HomeSection extends StatelessWidget {
     // BookOrbit says each book's own cover frame, so a shelf can hold square
     // audiobooks next to portrait epubs. Covers share one height and the
     // square ones come out wider.
-    double? frameOf(dynamic e) {
-      if (e is! Map<String, dynamic>) return null;
-      final m = e['media'];
-      final f = m is Map ? m['coverAspectRatio'] : null;
-      return f is num ? f.toDouble() : null;
-    }
+    double? frameOf(dynamic e) => forkBookFrame(e);
     final bool mixedShapes = context.read<LibraryProvider>().homeDashboard &&
         !isContinueListening &&
         !isSeriesSection &&
@@ -117,7 +112,7 @@ class HomeSection extends StatelessWidget {
             : isAuthorSection
                 ? 170
                 : mixedShapes
-                    ? cardWidth / (2 / 3) + textBlock
+                    ? cardWidth / forkPortraitFrame + textBlock
                     : cardWidth / coverAspectRatio + textBlock;
 
     final heading = forkShelfHeading(context, dashboard: context.read<LibraryProvider>().homeDashboard); // Fork: bigger on the Dashboard
@@ -231,9 +226,9 @@ class HomeSection extends StatelessWidget {
                   );
                 }
 
-                final itemRatio = mixedShapes ? (frameOf(entity) ?? 2 / 3) : coverAspectRatio;
+                final itemRatio = mixedShapes ? (frameOf(entity) ?? forkPortraitFrame) : coverAspectRatio;
                 return SizedBox(
-                  width: mixedShapes ? cardWidth / (2 / 3) * itemRatio : cardWidth,
+                  width: mixedShapes ? cardWidth / forkPortraitFrame * itemRatio : cardWidth,
                   child: BookCard(
                     item: entity,
                     showProgress: isContinueListening,

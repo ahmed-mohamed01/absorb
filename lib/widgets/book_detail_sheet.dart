@@ -67,6 +67,7 @@ import 'fork/position_sync_sheet.dart';
 import 'fork/reading_log_card.dart';
 import 'fork/book_detail_model.dart';
 import 'fork/tinted_sheet.dart';
+import '../services/fork/cover_frame.dart';
 import 'fork/editions_card.dart';
 import 'ebook_router.dart';
 import '../utils/duration_format.dart';

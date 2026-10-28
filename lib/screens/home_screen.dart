@@ -407,7 +407,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           child: SizedBox(
             // Taller row when 2:3 covers are on; the card's
             // cover alone is ~225 with rectangle covers.
-            height: _rectangleCovers || (lib.homeDashboard && items.any((e) => e is Map && (e['media'] as Map?)?['coverAspectRatio'] != null)) ? 320 : 250,
+            height: _rectangleCovers || (lib.homeDashboard && items.any((e) => forkBookFrame(e) != null)) ? 320 : 250,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -923,8 +923,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
 
   double? get _bookFrame {
     if (!widget.lib.homeDashboard) return null;
-    final f = (widget.item['media'] as Map?)?['coverAspectRatio'];
-    return f is num ? f.toDouble() : null;
+    return forkBookFrame(widget.item);
   }
 
   Widget _buildCoverImage(String? coverUrl, ColorScheme cs, Map<String, String> headers) {
