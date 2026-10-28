@@ -449,11 +449,12 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
   void _buildOfflineSections() {
     // The Dashboard is books, whatever the Library tab shows.
-    final isPodcast = !homeDashboard && isPodcastLibrary;
+    final dashboard = homeDashboard;
+    final isPodcast = !dashboard && isPodcastLibrary;
     final allDownloads = DownloadService().downloadedItems;
     final downloads = allDownloads.where((dl) {
       // The Dashboard shows every library's downloads.
-      if (homeDashboard) return true;
+      if (dashboard) return dl.itemId.length <= 36; // an episode's key is compound
       final libraryId = dl.libraryId;
       if (libraryId != null &&
           libraryId.isNotEmpty &&
@@ -468,7 +469,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         : DownloadService().keptEbooks.where((k) {
             if (downloadedIds.contains(k.itemId)) return false;
             // The Dashboard shows every library's downloads.
-            if (homeDashboard) return true;
+            if (dashboard) return true;
             final libraryId = k.libraryId;
             if (libraryId != null &&
                 libraryId.isNotEmpty &&
@@ -609,11 +610,12 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
   void _injectDownloadedSection() {
     // The Dashboard is books, whatever the Library tab shows.
-    final isPodcast = !homeDashboard && isPodcastLibrary;
+    final dashboard = homeDashboard;
+    final isPodcast = !dashboard && isPodcastLibrary;
     final allDownloads = DownloadService().downloadedItems;
     final downloads = allDownloads.where((dl) {
       // The Dashboard shows every library's downloads.
-      if (homeDashboard) return true;
+      if (dashboard) return dl.itemId.length <= 36; // an episode's key is compound
       final libraryId = dl.libraryId;
       if (libraryId != null &&
           libraryId.isNotEmpty &&
@@ -2011,6 +2013,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   }
 
   Future<void> _doLoadPersonalizedView() async {
+    final generation = (this as LibraryProvider)._accountLoadGeneration;
     if (_api == null || _selectedLibraryId == null) return;
 
     if (isOffline) {
@@ -2027,11 +2030,15 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     final homeId = _homeLibId!;
     try {
       await _refreshProgress();
+      // An account switch happened meanwhile.
+      if (generation != (this as LibraryProvider)._accountLoadGeneration) return;
       final fetched = await _api!.getPersonalizedView(
             homeId,
             include: const ['numEpisodesIncomplete'],
           ) ??
           [];
+      // An account switch happened meanwhile.
+      if (generation != (this as LibraryProvider)._accountLoadGeneration) return;
       if (_homeLibId != homeId) return;
       _personalizedSections = _withoutJustHidden(fetched);
       for (final section in _personalizedSections) {
@@ -2053,6 +2060,8 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       loadCollections();
       _narratedToContinueListening();
       await (this as _AbsorbingMixin)._updateAbsorbingCache();
+      // An account switch happened meanwhile.
+      if (generation != (this as LibraryProvider)._accountLoadGeneration) return;
 
       _injectDownloadedSection();
 
@@ -2117,6 +2126,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   }
 
   Future<void> _loadProgressShelves({required String reason}) async {
+    final generation = (this as LibraryProvider)._accountLoadGeneration;
     final api = _api;
     final libraryId = _homeLibId;
     if (api == null || libraryId == null) return;
@@ -2129,12 +2139,16 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
             limit: 10,
           ) ??
           [];
+      // An account switch happened meanwhile.
+      if (generation != (this as LibraryProvider)._accountLoadGeneration) return;
       _lastProgressShelvesFetchAt = DateTime.now();
       _lastProgressShelvesLibraryId = libraryId;
       if (_homeLibId != libraryId || isOffline) return;
 
       _mergeProgressShelves(sections);
       await (this as _AbsorbingMixin)._updateAbsorbingCache();
+      // An account switch happened meanwhile.
+      if (generation != (this as LibraryProvider)._accountLoadGeneration) return;
       notifyListeners();
       debugPrint(
           '[Library] refreshProgressShelves reason=$reason sections=${sections.length}');
@@ -2569,8 +2583,10 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     _addedGenres = genreJson.toSet();
     _genreSections = {};
     // Fetch items for each added genre in background
-    for (final genre in _addedGenres) {
-      _fetchGenreSectionItems(genre);
+    if (!homeDashboard) {
+      for (final genre in _addedGenres) {
+        _fetchGenreSectionItems(genre);
+      }
     }
   }
 
@@ -2643,6 +2659,8 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
   }
 
   List<Map<String, dynamic>> getOrderedHomeSections() {
+    // The Dashboard's order is the server's.
+    if (homeDashboard) return [for (final s in _personalizedSections) Map<String, dynamic>.from(s as Map)];
     final allSections = <String, Map<String, dynamic>>{};
 
     for (final s in _personalizedSections) {
@@ -2651,8 +2669,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       allSections[id] = Map<String, dynamic>.from(s);
     }
 
-    // Lists belong to the Library tab's library, not the Dashboard.
-    if (!homeDashboard) for (final p in _playlists) {
+    for (final p in _playlists) {
       final pm = p as Map<String, dynamic>;
       final id = 'playlist:${pm['id']}';
       allSections[id] = {
@@ -2664,7 +2681,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       };
     }
 
-    if (!homeDashboard) for (final c in _collections) {
+    for (final c in _collections) {
       final cm = c as Map<String, dynamic>;
       final id = 'collection:${cm['id']}';
       allSections[id] = {

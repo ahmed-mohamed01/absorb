@@ -120,7 +120,6 @@ final _customIconSlug = RegExp(r'^[a-z0-9]+(?:-[a-z0-9]+)*$');
 /// for, so it counts as none and the media type's icon shows instead.
 IconData forkLibraryIconData(Map<String, dynamic>? library) {
   if (library == null) return Icons.auto_stories_rounded;
-  if (library['dashboard'] == true) return Icons.dashboard_rounded;
   if (library['bookDock'] == true) return Icons.move_to_inbox_rounded;
   if (library['watchlist'] == true) return Icons.visibility_rounded;
   final icon = library['icon'];

@@ -17,6 +17,10 @@ class _Server {
   http.Client get client => MockClient((req) async {
         final path = '${req.method} ${req.url.path}';
         hits[path] = (hits[path] ?? 0) + 1;
+        // The Dashboard reads the user's shelf config first; none synced here.
+        if (req.url.path.endsWith('/auth/me')) {
+          return http.Response(jsonEncode({'settings': {}}), 200, headers: {'content-type': 'application/json'});
+        }
         if (req.url.path.endsWith('/dashboard/scrollers/continue-listening')) {
           return http.Response(jsonEncode({'books': listening}), 200, headers: {'content-type': 'application/json'});
         }

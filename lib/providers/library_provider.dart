@@ -130,9 +130,9 @@ class LibraryProvider extends ChangeNotifier
     }
     final wasAuthenticated = _auth?.isAuthenticated ?? false;
     _auth = auth;
-    ForkLibraryFlow.unifiedAbsorbing = auth.apiService?.isBookOrbit == true;
 
     if (auth.isAuthenticated) {
+      ForkLibraryFlow.unifiedAbsorbing = auth.apiService?.isBookOrbit == true;
       final isFreshLogin = !wasAuthenticated;
 
       final authKey = '${auth.userId}@${auth.serverUrl}';
@@ -192,6 +192,9 @@ class LibraryProvider extends ChangeNotifier
         _seriesBooksCache.clear();
         _seriesTabCache.clear();
         _personalizedInFlight = null;
+        _lastProgressShelvesLibraryId = null;
+        _lastProgressShelvesFetchAt = null;
+        _progressShelvesInFlight = null;
         _rssHydrationInFlight = false;
         _lastRssHydrationAt = null;
         _lastRssHydrationLibraryId = null;
@@ -297,6 +300,7 @@ class LibraryProvider extends ChangeNotifier
       if (_lastAuthKey == key) return;
       _lastAuthKey = key;
       _lastUseLocalServer = null;
+      ForkLibraryFlow.unifiedAbsorbing = auth.isBookOrbit;
       final generation = ++_accountLoadGeneration;
       final completer = _accountReadyCompleter;
       if (completer != null && !completer.isCompleted) completer.complete();
@@ -325,6 +329,7 @@ class LibraryProvider extends ChangeNotifier
       }();
       notifyListeners();
     } else {
+      ForkLibraryFlow.unifiedAbsorbing = false;
       _accountLoadGeneration++;
       final completer = _accountReadyCompleter;
       if (completer != null && !completer.isCompleted) completer.complete();

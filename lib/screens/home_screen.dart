@@ -23,6 +23,8 @@ import '../widgets/home_section.dart';
 import '../widgets/absorb_page_header.dart';
 import '../widgets/library_picker_sheet.dart';
 import '../widgets/fork/library_icon.dart';
+import '../widgets/fork/dashboard_home.dart';
+import '../widgets/fork/dashboard_widgets.dart';
 import '../widgets/shimmer.dart';
 import '../widgets/book_detail_sheet.dart';
 import '../widgets/card_buttons.dart';
@@ -39,7 +41,6 @@ import '../widgets/section_labels.dart';
 import 'app_shell.dart';
 import '../l10n/app_localizations.dart';
 import '../utils/duration_format.dart';
-import '../services/api_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -58,6 +59,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   // ── Batch selection ──
   bool _selectionMode = false;
   bool _batchActionBusy = false;
+  int _dashboardRefreshTick = 0;
   final Set<String> _selectedItemIds = {};
 
   void _resetSelectionState() {
@@ -217,8 +219,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   String? _coversLibraryId;
 
   Future<void> _loadSettings() async {
-    final lib = mounted ? context.read<LibraryProvider>() : null;
-    final libId = lib?.homeDashboard == true ? BookOrbitApiService.dashboardLibraryId : lib?.selectedLibraryId;
+    final libId = mounted ? context.read<LibraryProvider>().homeLibraryId : null;
     _coversLibraryId = libId;
     final results = await Future.wait([
       PlayerSettings.getHideEbookOnly(),
@@ -353,6 +354,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
     if (items.isEmpty) return const <Widget>[];
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
+    final heading = forkShelfHeading(context, dashboard: lib.homeDashboard); // Fork: bigger on the Dashboard
     return <Widget>[
       SliverToBoxAdapter(
         child: GestureDetector(
@@ -367,20 +369,26 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
             child: Row(children: [
-              Icon(icon, size: 16, color: cs.primary.withValues(alpha: 0.7)),
+              Icon(icon, size: heading?.iconSize ?? 16, color: heading?.iconColor ?? cs.primary.withValues(alpha: 0.7)),
               const SizedBox(width: 8),
-              Text(title,
-                  style: tt.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w500,
-                    color: cs.onSurface.withValues(alpha: 0.8),
-                    letterSpacing: 0.3,
-                  )),
+              Flexible(
+                child: Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: heading?.style ?? tt.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: cs.onSurface.withValues(alpha: 0.8),
+                      letterSpacing: 0.3,
+                    )),
+              ),
               const SizedBox(width: 4),
               Icon(Icons.chevron_right_rounded, size: 16,
                   color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
-              const SizedBox(width: 12),
-              Expanded(child: Container(height: 0.5,
-                  color: cs.outlineVariant.withValues(alpha: 0.2))),
+              if (heading == null) ...[ // Fork: the Dashboard heading has no hairline, so the title keeps its width
+                const SizedBox(width: 12),
+                Expanded(child: Container(height: 0.5,
+                    color: cs.outlineVariant.withValues(alpha: 0.2))),
+              ],
             ]),
           ),
         ),
@@ -450,9 +458,9 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
     final lowerFade = Color.lerp(cs.surface, scaffoldBg, 0.55) ?? scaffoldBg;
     final lib = context.watch<LibraryProvider>();
     final allLibraries = lib.libraries;
-    final libraryName = lib.homeDashboard ? 'Dashboard' : lib.selectedLibrary?['name'] as String? ?? l.libraryFallback;
+    final libraryName = lib.selectedLibrary?['name'] as String? ?? l.libraryFallback;
     // Cover shape can differ per library; re-resolve after a library switch.
-    final homeLibId = lib.homeDashboard ? BookOrbitApiService.dashboardLibraryId : lib.selectedLibraryId;
+    final homeLibId = lib.homeLibraryId;
     if (homeLibId != _coversLibraryId) {
       _coversLibraryId = homeLibId;
       PlayerSettings.getRectangleCoversFor(_coversLibraryId).then((v) {
@@ -473,6 +481,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
     }
 
     final auth = context.watch<AuthProvider>();
+    final serverLabels = lib.homeDashboard && forkDashboardConfigured(auth.apiService) == true;
     final selectionAvailable = !lib.isOffline;
     if (!selectionAvailable && _selectionMode) _resetSelectionState();
     // Only walked while selecting: this crosses every shelf, and home rebuilds
@@ -560,6 +569,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
             },
             child: RefreshIndicator(
             onRefresh: () async {
+              if (lib.homeDashboard) setState(() => _dashboardRefreshTick++);
               await lib.refresh();
             },
             child: CustomScrollView(
@@ -603,13 +613,14 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                             ),
                           ),
                         ),
-                      if (allLibraries.length > 1)
+                      // Fork: the Dashboard has no library to pick (FORK_NOTES.md).
+                      if (allLibraries.length > 1 && !lib.homeDashboard)
                         Material(
                           color: cs.onSurface.withValues(alpha: 0.06),
                           borderRadius: BorderRadius.circular(20),
                           clipBehavior: Clip.antiAlias,
                           child: InkWell(
-                            onTap: lib.homeDashboard ? null : () => showLibraryPickerSheet(context, lib),
+                            onTap: () => showLibraryPickerSheet(context, lib),
                             borderRadius: BorderRadius.circular(20),
                             child: Container(
                               padding: const EdgeInsets.symmetric(
@@ -626,7 +637,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     ForkLibraryIcon(
-                                        library: lib.homeDashboard ? const {'dashboard': true} : lib.selectedLibrary,
+                                        library: lib.selectedLibrary,
                                         size: 18,
                                         color: cs.onSurfaceVariant),
                                     const SizedBox(width: 6),
@@ -641,18 +652,16 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                                           overflow: TextOverflow.ellipsis,
                                           maxLines: 1),
                                     ),
-                                    if (!lib.homeDashboard) ...[
-                                      const SizedBox(width: 4),
-                                      Icon(Icons.unfold_more_rounded,
-                                          size: 18, color: cs.onSurfaceVariant),
-                                    ],
+                                    const SizedBox(width: 4),
+                                    Icon(Icons.unfold_more_rounded,
+                                        size: 18, color: cs.onSurfaceVariant),
                                   ],
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      if (!lib.isOffline)
+                      if (!lib.isOffline && !lib.homeDashboard)
                         GestureDetector(
                           onTap: () => HomeCustomizeSheet.show(context),
                           child: Container(
@@ -668,6 +677,9 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                     ],
                   ),
                 ),
+
+                if (lib.homeDashboard && !lib.isOffline)
+                  SliverToBoxAdapter(child: ForkDashboardWidgetStrip(refreshTick: _dashboardRefreshTick, onOpenBook: (id) => showBookDetailSheet(context, id), onOpenPlayer: AppShell.goToAbsorbingGlobal, onOpenStats: () => AppShell.switchToTab(3), coverUrl: (id) => lib.getCoverUrl(id, width: 120))),
 
                 // (Continue Listening is now rendered in the generic sections loop below)
 
@@ -760,7 +772,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                     if (id == 'continue-listening') {
                       return _heroShelf(
                         lib: lib,
-                        title: l.continueListening,
+                        title: forkSectionLabel(serverLabels, section['label'] as String?, l.continueListening),
                         icon: Icons.play_circle_outline_rounded,
                         items: _cachedClItems ?? const [],
                         reading: false,
@@ -770,7 +782,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                     if (id == 'continue-reading') {
                       return _heroShelf(
                         lib: lib,
-                        title: sectionLabel(id, section['label'] as String?, l),
+                        title: forkSectionLabel(serverLabels, section['label'] as String?, sectionLabel(id, section['label'] as String?, l)),
                         icon: Icons.menu_book_rounded,
                         items: _filterEbookOnly(
                             (section['entities'] as List<dynamic>?) ?? [],
@@ -780,7 +792,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                       );
                     }
 
-                    final label = sectionLabel(id, section['label'] as String?, l);
+                    final label = forkSectionLabel(serverLabels, section['label'] as String?, sectionLabel(id, section['label'] as String?, l));
                     final entities = _filterEbookOnly(
                         (section['entities'] as List<dynamic>?) ?? [],
                         sectionType: section['type'] as String?);
@@ -812,7 +824,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                         coverAspectRatio: _rectangleCovers ? 2 / 3 : 1.0,
                       );
                     } else {
-                      sectionIcon = _sectionIcons[id] ?? Icons.album_outlined;
+                      sectionIcon = _sectionIcons[id] ?? forkSectionIcon(id) ?? Icons.album_outlined;
                       // Author/series sections don't have book-shaped entities,
                       // so skip the book-oriented SectionDetailSheet for them.
                       if (type != 'authors' && type != 'series') {
@@ -848,6 +860,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                     ];
                   }),
 
+                if (lib.homeDashboard && !lib.isOffline)
+                  SliverToBoxAdapter(child: ForkDashboardFooter(configured: forkDashboardConfigured(auth.apiService))),
                 const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
               ],
             ),

@@ -56,6 +56,7 @@ void _forkRememberItem(Map<String, dynamic> item) {
 /// Run from `clearCaches` (sign-out, account switch) through
 /// `_watchlistClearCaches`.
 void _forkPerfClearCaches() {
+  _forkDashboardClearCaches();
   _forkNoManifest.clear();
   _forkItems.clear();
   _forkWarm.clear();

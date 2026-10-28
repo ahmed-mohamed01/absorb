@@ -142,9 +142,12 @@ mixin _StateMixin on ChangeNotifier {
   /// Library tab keeps browsing the selected library.
   bool get homeDashboard => canShowDashboard;
   String? get _homeLibId => homeDashboard ? BookOrbitApiService.dashboardLibraryId : _selectedLibraryId;
+  /// The library Home shows: the Dashboard, or the selected library.
+  String? get homeLibraryId => _homeLibId;
 
+  // A lapsed BookOrbit session keeps the Dashboard.
   bool get canShowDashboard =>
-      _api?.isBookOrbit == true &&
+      (_api?.isBookOrbit == true || (_signedOut && ForkLibraryFlow.unifiedAbsorbing)) &&
       _libraries.where((l) => l is Map && l['mediaType'] != 'podcast' && l['bookDock'] != true && l['watchlist'] != true).length > 1;
   List<dynamic> get personalizedSections => _personalizedSections;
   List<dynamic> get series => _series;

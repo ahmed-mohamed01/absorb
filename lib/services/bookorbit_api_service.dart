@@ -1691,6 +1691,14 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
 
   Future<List<Map<String, dynamic>>> _personalized(String libId, Map<String, String> q) async {
     final global = libId == dashboardLibraryId;
+    // Synced Dashboard shelves follow the server's configuration.
+    if (global) {
+      final config = await _forkDashboardShelfConfig();
+      if (config != null) {
+        final shelves = await _forkConfiguredShelves(config, q);
+        if (shelves != null) return shelves;
+      }
+    }
     final limit = (int.tryParse(q['limit'] ?? '') ?? 15).clamp(1, 50);
     final wanted = (q['shelves'] ?? '').split(',').where((s) => s.isNotEmpty).toSet();
     bool want(String id) => wanted.isEmpty || wanted.contains(id);

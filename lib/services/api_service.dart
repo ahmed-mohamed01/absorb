@@ -28,10 +28,12 @@ import '../utils/percent_escapes.dart';
 import 'fork/position_sync_chain.dart';
 import 'fork/watchlist_info.dart';
 import 'fork/perf_caches.dart';
+import 'fork/dashboard_widgets_model.dart';
 
 part 'bookorbit_api_service.dart';
 part 'bookorbit_admin_api.dart';
 part 'fork/bookorbit_dashboard.dart';
+part 'fork/bookorbit_widgets.dart';
 part 'fork/bookorbit_position_sync.dart';
 part 'fork/bookorbit_watchlist.dart';
 part 'fork/bookorbit_perf.dart';

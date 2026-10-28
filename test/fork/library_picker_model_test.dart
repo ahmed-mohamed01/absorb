@@ -7,13 +7,13 @@ void main() {
   group('groups', () {
     test('tools go under the libraries, each keeping its order', () {
       final g = libraryPickerGroups([
-        {'id': 'dashboard', 'dashboard': true},
+        {'id': '0', 'name': 'Comics'},
         {'id': 'watchlist', 'watchlist': true},
         {'id': '1', 'name': 'Audiobooks'},
         {'id': 'book-dock', 'bookDock': true},
         {'id': '2', 'name': 'Ebooks'},
       ]);
-      expect(g.libraries.map((l) => l['id']), ['dashboard', '1', '2']);
+      expect(g.libraries.map((l) => l['id']), ['0', '1', '2']);
       expect(g.tools.map((l) => l['id']), ['watchlist', 'book-dock']);
     });
 
@@ -65,7 +65,6 @@ void main() {
 
   group('icon', () {
     test('the virtual libraries keep their own icons', () {
-      expect(forkLibraryIconData({'dashboard': true, 'icon': 'Headphones'}), Icons.dashboard_rounded);
       expect(forkLibraryIconData({'bookDock': true, 'icon': 'database'}), Icons.move_to_inbox_rounded);
       expect(forkLibraryIconData({'watchlist': true, 'icon': 'database'}), Icons.visibility_rounded);
     });

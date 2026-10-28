@@ -10,6 +10,7 @@ import 'author_card.dart';
 import 'series_card.dart';
 import 'episode_list_sheet.dart';
 import 'books_sheet_shared.dart' show coverSizeScale;
+import 'fork/dashboard_home.dart';
 
 class HomeSection extends StatelessWidget {
   final String title;
@@ -119,6 +120,7 @@ class HomeSection extends StatelessWidget {
                     ? cardWidth / (2 / 3) + textBlock
                     : cardWidth / coverAspectRatio + textBlock;
 
+    final heading = forkShelfHeading(context, dashboard: context.read<LibraryProvider>().homeDashboard); // Fork: bigger on the Dashboard
     return Padding(
       padding: const EdgeInsets.only(top: 24),
       child: Column(
@@ -132,14 +134,18 @@ class HomeSection extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
                 children: [
-                  Icon(icon, size: 16, color: cs.primary.withValues(alpha: 0.7)),
+                  Icon(icon, size: heading?.iconSize ?? 16, color: heading?.iconColor ?? cs.primary.withValues(alpha: 0.7)),
                   const SizedBox(width: 8),
-                  Text(
-                    title,
-                    style: tt.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w500,
-                      color: cs.onSurface.withValues(alpha: 0.8),
-                      letterSpacing: 0.3,
+                  Flexible(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: heading?.style ?? tt.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w500,
+                        color: cs.onSurface.withValues(alpha: 0.8),
+                        letterSpacing: 0.3,
+                      ),
                     ),
                   ),
                   if (onTitleTap != null) ...[
@@ -147,13 +153,15 @@ class HomeSection extends StatelessWidget {
                     Icon(Icons.chevron_right_rounded, size: 16,
                       color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
                   ],
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Container(
-                      height: 0.5,
-                      color: cs.outlineVariant.withValues(alpha: 0.2),
+                  if (heading == null) ...[ // Fork: the Dashboard heading has no hairline, so the title keeps its width
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Container(
+                        height: 0.5,
+                        color: cs.outlineVariant.withValues(alpha: 0.2),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

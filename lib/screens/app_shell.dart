@@ -85,6 +85,9 @@ class AppShell extends StatefulWidget {
     _AppShellState._instance?._switchToAbsorbing();
   }
 
+  /// Switch to a tab by page index (3 is Stats) without needing a context.
+  static void switchToTab(int index) => _AppShellState._instance?._navigateTo(index);
+
   /// Track when expanded card is opened/closed externally (e.g. chevron tap).
   static void setExpandedOpen(bool open) {
     _AppShellState._instance?._expandedIsOpen = open;
@@ -813,7 +816,8 @@ class _AppShellState extends State<AppShell>
             index: _currentIndex,
             children: List<Widget>.generate(
               _pages.length,
-              (i) => _pages[i] ?? const SizedBox.shrink(),
+              // Fork: hidden tabs stop their animations and timers (FORK_NOTES.md).
+              (i) => TickerMode(enabled: i == _currentIndex, child: _pages[i] ?? const SizedBox.shrink()),
             ),
           ),
         ),

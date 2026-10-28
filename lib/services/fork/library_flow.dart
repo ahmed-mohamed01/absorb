@@ -3,12 +3,15 @@
 
 import '../api_service.dart';
 
+/// The untethered library flow: what the Library tab, Home and the player
+/// share now that one selected library no longer drives all three.
 class ForkLibraryFlow {
   /// True while the signed-in server is BookOrbit; the Absorbing page then
   /// shows every library and a library switch never stops playback, as if
   /// the "Unified Absorbing page" setting were on.
   static bool unifiedAbsorbing = false;
 
+  /// The Book Dock and the Watchlist: BookOrbit tools listed as libraries, visited rather than kept.
   static bool isVirtualLibrary(String? id) =>
       id == ApiService.bookDockLibraryId || id == ApiService.watchlistLibraryId;
 
