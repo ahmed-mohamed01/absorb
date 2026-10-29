@@ -36,7 +36,6 @@ import 'episode_list_sheet.dart';
 import 'equalizer_sheet.dart';
 import 'feature_hint.dart';
 import 'listening_session_card.dart';
-import 'fork/reading_log_list.dart';
 import 'notes_sheet.dart';
 import 'overlay_toast.dart';
 import 'sleep_timer_sheet.dart';
@@ -2684,7 +2683,7 @@ class _PlaybackHistorySheetBodyState extends State<_PlaybackHistoryBody>
               ),
               Tab(
                 key: const ValueKey('playback-history-server-tab'),
-                text: _readingLog ? readingLogTabTitle : l.historyServerTab,
+                text: l.historyServerTab,
               ),
             ],
           ),
@@ -2826,8 +2825,6 @@ class _PlaybackHistorySheetBodyState extends State<_PlaybackHistoryBody>
     );
   }
 
-  bool get _readingLog => widget.api is BookOrbitApiService || context.read<AuthProvider>().isBookOrbit;
-
   Widget _buildServerHistory(AppLocalizations l, ColorScheme cs) {
     final future = _serverFuture;
     if (future == null) {
@@ -2870,10 +2867,6 @@ class _PlaybackHistorySheetBodyState extends State<_PlaybackHistoryBody>
             if (add != null) Padding(padding: const EdgeInsets.fromLTRB(20, 12, 20, 0), child: add),
             Expanded(child: _serverMessage(l.historyNoServerSessions, l, cs)),
           ]);
-        }
-
-        if (_readingLog) {
-          return ReadingLogList(sessions: sessions, scrollController: widget.scrollController, onSessionTap: _showServerSessionDetails);
         }
 
         return ListView(

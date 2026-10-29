@@ -355,10 +355,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         const SizedBox(height: 8),
         _personalNoteBlock(cs, tt, auth),
       ],
-      if (bookOrbitOnline) ...[
-        const SizedBox(height: 16),
-        ReadingLogCard(itemId: widget.itemId, accent: accent),
-      ] else if (!lib.isOffline && !isEbookOnly) ...[
+      if (bookOrbitOnline || (!lib.isOffline && !isEbookOnly)) ...[
         const SizedBox(height: 16),
         _listeningStatsBlock(context, cs, tt, accent, title),
       ],

@@ -147,7 +147,6 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   /// Forget everything cached for the signed-in account.
   static void clearCaches() {
     _ebookReadCards.clear();
-    _forkReadingStats.clear();
     _manifests.clear();
     _manifestAt.clear();
     _details.clear();
@@ -4729,7 +4728,6 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         if (source != null) 'source': source,
         ...await _clientName(),
       });
-      if (_forkFirstSend(sessionId)) await _rememberSessionDevice(itemId, _iso(startedAt));
       return true;
     } catch (e) {
       debugPrint('[BookOrbit] reading time for $itemId not logged: $e');
@@ -5080,7 +5078,6 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         'web' => 'BookOrbit web',
         'koreader' => 'KOReader',
         'kobo' => 'Kobo',
-        'audiobookshelf' => 'Audiobookshelf',
         'manual' => 'Manual entry',
         _ => 'BookOrbit',
       };
@@ -5140,7 +5137,14 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
         started == null ? when.subtract(Duration(seconds: listened.round())) : DateTime.fromMillisecondsSinceEpoch(started),
       )..listenedSeconds = listened;
       final manifest = _manifests[_key(bookId)] ?? await _manifest(bookId);
-      final total = await _forkBookSeconds(bookId, manifest);
+      var total = manifest == null ? 0.0 : BookOrbitMapper.totalSeconds(manifest);
+      // A narrated EPUB has no audiobook; its length is the narration's.
+      // Without one the session went up with no start or end point.
+      if (manifest == null) {
+        try {
+          total = (await _narration(bookId))?.overlay.duration ?? 0.0;
+        } catch (_) {}
+      }
       final startTime = (session['startTime'] as num?)?.toDouble();
       if (total > 0 && currentTime != null) s.lastPercent = (currentTime / total * 100).clamp(0.0, 100.0);
       if (total > 0 && startTime != null) s.startPercent = (startTime / total * 100).clamp(0.0, 100.0);
@@ -5740,7 +5744,18 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     try {
       manifest = await _manifest(bookId);
     } catch (_) {}
-    final bookSeconds = await _forkReadingLogPrepare(bookId, res, manifest == null ? 0.0 : BookOrbitMapper.totalSeconds(manifest));
+    // A narrated EPUB with no audiobook: reading and listening both happen in
+    // the one file, so every session on it is this book's, timed against the
+    // narration.
+    Map? narration;
+    if (manifest == null) {
+      try {
+        narration = (BookOrbitMapper.item(detail: await _detail(bookId))['media'] as Map)['narration'] as Map?;
+      } catch (_) {}
+    }
+    final bookSeconds = manifest != null
+        ? BookOrbitMapper.totalSeconds(manifest)
+        : ((narration?['duration'] as num?)?.toDouble() ?? 0.0);
     // Session rows carry the book's own title and author, as Audiobookshelf's do.
     final book = manifest?['book'] as Map?;
     var title = book?['title'] as String?;
@@ -5758,15 +5773,22 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     final mine = await _sessionDevices();
     final sessions = (res['items'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
+        // Reading the ebook of the same book is not listening, unless the
+        // ebook is what reads it aloud.
+        .where((s) =>
+            narration != null ||
+            s['format'] == null ||
+            s['sessionType'] == 'listen' ||
+            BookOrbitMapper.isAudioFormat(s['format'] as String?))
         .map((s) {
       final started = DateTime.tryParse(s['startedAt'] as String? ?? '')?.toLocal();
       final endPct = (s['endProgress'] as num?)?.toDouble();
       final deltaPct = (s['progressDelta'] as num?)?.toDouble();
-      final endAt = _forkHasPosition(s) && endPct != null && bookSeconds > 0 ? endPct / 100 * bookSeconds : null;
+      final endAt = endPct != null && bookSeconds > 0 ? endPct / 100 * bookSeconds : null;
       final startAt = endAt != null && deltaPct != null
           ? ((endPct! - deltaPct) / 100 * bookSeconds).clamp(0.0, bookSeconds)
           : endAt;
-      final ownDevice = _forkOwnDevice(mine, s['startedAt']);
+      final ownDevice = mine['$bookId@${s['startedAt']}'];
       return {
         'id': 'bo-session-${s['id']}',
         'libraryItemId': bookId,
@@ -5789,7 +5811,6 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
             : '${started.year}-${started.month.toString().padLeft(2, '0')}-${started.day.toString().padLeft(2, '0')}',
         'deviceInfo': ownDevice ?? {'clientName': _sourceLabel(s['source'])},
         'mediaPlayer': s['source'] ?? 'web',
-        ..._forkReadingLogFields(s, ownDevice != null),
       };
     }).toList();
     return {

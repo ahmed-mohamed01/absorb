@@ -140,7 +140,7 @@ extension _ForkBookOrbitPerf on BookOrbitApiService {
   /// memory, the detail has no duration, or there is no position, and the
   /// caller goes on as before.
   Future<Map<String, dynamic>?> _forkNarrationProgress(String id, Map<String, dynamic>? card) async {
-    if (_narrations[_key(id)] != null) return null;
+    if (BookOrbitApiService._narrations[_key(id)] != null) return null;
     try {
       final media = BookOrbitMapper.item(detail: await _detail(id))['media'] as Map<String, dynamic>;
       final narration = media['narration'] as Map?;

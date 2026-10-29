@@ -202,6 +202,7 @@ class ForkScrollerConfig {
     required Map<String, dynamic> response,
     required Set<String> wanted,
     required Map<String, dynamic> Function(Map<String, dynamic> card) toItem,
+    bool Function(String sectionId, Map<String, dynamic> card)? hidden,
   }) {
     final byId = <String, List<Map<String, dynamic>>>{};
     final raw = response['items'];
@@ -261,6 +262,7 @@ class ForkScrollerConfig {
           (card) => belongs(card, c.type == 'continue-listening'),
         );
       }
+      if (hidden != null) cards = cards.where((card) => !hidden(id, card));
       final entities = cards.take(batch.item['limit'] as int).map((card) {
         final item = toItem({
           ...card,
@@ -381,7 +383,15 @@ extension ForkDashboardConfigurationApi on BookOrbitApiService {
       debugPrint('[BookOrbit] Dashboard batch failed: $e');
       return null;
     }
+    // Continue shelves honour what was removed from them, as upstream's do.
+    final hiddenBooks = (await ScopedPrefs.getStringList(BookOrbitApiService._hiddenBooksKey)).toSet();
+    final hiddenSeries = (await ScopedPrefs.getStringList(BookOrbitApiService._hiddenSeriesKey)).toSet();
     return ForkScrollerConfig.sections(
+      hidden: (shelfId, c) => switch (shelfId) {
+        'continue-listening' || 'continue-reading' => hiddenBooks.contains('${c['id']}'),
+        'continue-series' => hiddenSeries.contains('${c['seriesId'] ?? 'name:${c['seriesName']}'}'),
+        _ => false,
+      },
       items: items,
       response: response,
       wanted: wanted,
