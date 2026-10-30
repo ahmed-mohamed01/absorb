@@ -17,7 +17,7 @@ void main() {
   });
 
   test('a mixed Dashboard shelf gives each book its shape in a portrait slot', () {
-    final frames = ForkShelfFrames([_book(1), _book(2 / 3), _book()], 1.0, dashboard: true);
+    final frames = ForkShelfFrames([_book(1), _book(2 / 3), _book()], 1.0, ownFrames: true);
     expect(frames.mixed, isTrue);
     expect(frames.hasPortrait, isTrue);
     expect(frames.of(_book(1)), 1.0);
@@ -26,24 +26,24 @@ void main() {
   });
 
   test('an all-square Dashboard shelf has no portrait room with the rectangle setting', () {
-    final frames = ForkShelfFrames([_book(1), _book(1)], forkPortraitFrame, dashboard: true);
+    final frames = ForkShelfFrames([_book(1), _book(1)], forkPortraitFrame, ownFrames: true);
     expect(frames.mixed, isFalse);
     expect(frames.hasPortrait, isFalse);
     expect(frames.slotOf(_book(1)), 1.0);
   });
 
   test('off the Dashboard every book takes the cover setting', () {
-    final frames = ForkShelfFrames([_book(1), _book(2 / 3)], forkPortraitFrame, dashboard: false);
+    final frames = ForkShelfFrames([_book(1), _book(2 / 3)], forkPortraitFrame, ownFrames: false);
     expect(frames.mixed, isFalse);
     expect(frames.hasPortrait, isTrue);
     expect(frames.of(_book(1)), forkPortraitFrame);
-    final square = ForkShelfFrames(const [], 1.0, dashboard: false);
+    final square = ForkShelfFrames(const [], 1.0, ownFrames: false);
     expect(square.hasPortrait, isFalse);
   });
 
   Future<void> pumpRow(WidgetTester tester, Widget Function(ForkShelfFrames, Map<String, dynamic>, int) cover) async {
     final books = [_book(2 / 3), _book(1)];
-    final frames = ForkShelfFrames(books, 1.0, dashboard: true);
+    final frames = ForkShelfFrames(books, 1.0, ownFrames: true);
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: Column(children: [
@@ -84,5 +84,47 @@ void main() {
     expect(square.width, closeTo(112 * 2 / 3, 0.01));
     expect(square.height, closeTo(square.width, 0.01));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('grid tile: a square cover drops to the bottom of a portrait slot', (tester) async {
+    final frames = ForkShelfFrames([_book(2 / 3), _book(1)], 1.0, ownFrames: true);
+    await tester.pumpWidget(Directionality(
+      textDirection: TextDirection.ltr,
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: 100,
+          height: 200,
+          child: ForkShelfGridTile(
+            frames: frames,
+            item: _book(1),
+            child: const Column(children: [
+              AspectRatio(aspectRatio: 1, child: ColoredBox(key: ValueKey('cover'), color: Colors.grey)),
+            ]),
+          ),
+        ),
+      ),
+    ));
+    final cover = tester.getRect(find.byKey(const ValueKey('cover')));
+    expect(cover.top, closeTo(50, 0.01));
+    expect(cover.bottom, closeTo(150, 0.01));
+  });
+
+  test('grid cells keep upstream\'s square ratio and grow for portrait books', () {
+    final square = ForkShelfFrames([_book(1), _book(1)], 1.0, ownFrames: true);
+    expect(square.gridCellRatio, closeTo(0.65, 0.01));
+    final mixed = ForkShelfFrames([_book(1), _book(2 / 3)], 1.0, ownFrames: true);
+    expect(mixed.gridCellRatio, closeTo(1 / (1.5 + forkGridTitleShare), 0.0001));
+  });
+
+  test('the cover strip gives each cover its own width and overlaps them', () {
+    final frames = ForkShelfFrames([_book(2 / 3), _book(1)], 1.0, ownFrames: true);
+    final strip = forkCoverStrip([_book(2 / 3), _book(1), _book(2 / 3)], frames, height: 90);
+    expect(strip.widths, [60, 90, 60]);
+    expect(strip.lefts[0], 0);
+    expect(strip.lefts[1], closeTo(60 * 0.68, 0.0001));
+    expect(strip.lefts[2], closeTo(60 * 0.68 + 90 * 0.68, 0.0001));
+    expect(strip.width, closeTo(strip.lefts[2] + 60, 0.0001));
+    expect(forkCoverStrip([], frames).width, 0);
   });
 }

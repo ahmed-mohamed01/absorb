@@ -244,8 +244,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           builder: (ctx, sc) => DecoratedBox(
             decoration: forkTintedSheetDecoration(ctx, _forkSheetTint),
             child: ListView(controller: sc, padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), children: [
-            Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.24), borderRadius: BorderRadius.circular(2)))),
+            forkSheetHandle(ctx),
             Text(_kBookInfo, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 16),
             Wrap(spacing: 8, runSpacing: 8, children: [
@@ -1052,8 +1051,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
       builder: (ctx) => DecoratedBox(decoration: forkTintedSheetDecoration(ctx, _forkSheetTint), child: SafeArea(child: Padding(
         padding: const EdgeInsets.all(8),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.24), borderRadius: BorderRadius.circular(2)))),
+          forkSheetHandle(ctx),
           if (title != null)
             Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(title, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600))),

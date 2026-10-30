@@ -1363,7 +1363,8 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
             }
             if (ApiService.isWatchlistItem(id)) return _watchItemFor(id);
             final detail = await _detail(id);
-            return BookOrbitMapper.item(detail: detail, manifest: _manifests[_key(id)]);
+            return _forkWithFrame( // Fork: the book's cover shape
+                BookOrbitMapper.item(detail: detail, manifest: _manifests[_key(id)]), detail['coverAspectRatio']);
           } catch (_) {
             return null;
           }

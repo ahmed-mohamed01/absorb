@@ -132,7 +132,7 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
   }
 
   Widget _buildList(ColorScheme cs, TextTheme tt, LibraryProvider lib, AppLocalizations l) {
-    final frames = ForkShelfFrames(widget.entities, widget.coverAspectRatio, dashboard: lib.homeDashboard); // Fork: each book's own shape
+    final frames = ForkShelfFrames(widget.entities, widget.coverAspectRatio, ownFrames: lib.homeDashboard); // Fork: each book's own shape
     return ListView.builder(
       controller: widget.scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4)
@@ -244,7 +244,7 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
   }
 
   Widget _buildGrid(ColorScheme cs, TextTheme tt, LibraryProvider lib, AppLocalizations l) {
-    final frames = ForkShelfFrames(widget.entities, widget.coverAspectRatio, dashboard: lib.homeDashboard); // Fork: each book's own shape
+    final frames = ForkShelfFrames(widget.entities, widget.coverAspectRatio, ownFrames: lib.homeDashboard); // Fork: each book's own shape
     final isRect = frames.hasPortrait; // Fork: from the books' shapes
     // Text area is ~50px; cover uses aspect ratio to determine height
     final childAspectRatio = isRect ? 0.45 : 0.62;

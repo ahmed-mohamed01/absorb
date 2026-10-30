@@ -30,6 +30,11 @@ import '../services/api_service.dart';
 import '../utils/duration_format.dart';
 import '../utils/series_number_match.dart';
 import 'fork/watchlist_series_actions.dart';
+import 'fork/shelf_cover_frames.dart';
+import 'fork/tinted_sheet.dart';
+import '../services/fork/cover_frame.dart';
+
+part 'fork/series_books_fork.dart';
 
 /// Show a bottom sheet with all books in a series, sorted by sequence.
 /// Can be called from any screen.
@@ -638,20 +643,20 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(16, 0, 16, 24 + MediaQuery.of(context).viewPadding.bottom),
       sliver: SliverGrid.builder(
-        gridDelegate: sheetBookGridDelegate(context, childAspectRatio: 0.65),
+        gridDelegate: sheetBookGridDelegate(context, childAspectRatio: _forkFrames.gridCellRatio), // Fork: room for portrait covers
         itemCount: parsed.subSeries.length + parsed.standalone.length,
         itemBuilder: (context, index) {
           if (index < parsed.subSeries.length) {
             final series = parsed.subSeries[index];
             return _asJumpTarget(
               identical(series, owner),
-              GridSeriesTileDirect(series: series, parentSeriesId: widget.seriesId),
+              _forkSeriesTile(series), // Fork: its books' shape
             );
           }
           final book = parsed.standalone[index - parsed.subSeries.length];
           return _asJumpTarget(
             book['id'] == _jumpTargetId,
-            GridBookTile(item: book, sequenceBadge: _getSequenceString(book)),
+            _forkGridTile(book), // Fork: each book's own shape
           );
         },
       ),
@@ -988,11 +993,9 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
     final nextAt = nextUp == null ? 0 : _books.indexOf(nextUp);
     final start = (nextAt - 2).clamp(0, n - count);
     final covers = _books.sublist(start, start + count);
-    // Portrait tiles when the library shows rectangle covers.
-    final w = _rectCovers ? 58.0 : 76.0;
-    final h = _rectCovers ? 86.0 : 76.0;
-    final step = w * 0.68;
-    final width = w + step * (covers.length - 1);
+    final strip = forkCoverStrip(covers, _forkFrames); // Fork: each cover in its own shape
+    final h = strip.height;
+    final width = strip.width;
     final nextId = nextUp?['id'] as String?;
     // Paint order is list order. The covers fan out from the next book:
     // the ones to its left stack towards it, the ones to its right stack
@@ -1014,12 +1017,12 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
           child: Stack(children: [
             for (final book in order)
               Positioned(
-                left: covers.indexOf(book) * step,
+                left: strip.lefts[covers.indexOf(book)], // Fork
                 top: book['id'] == nextId ? 0 : 6,
                 // The ring is the tile's own background showing around the
                 // clipped cover, so it stays clean at the corners.
                 child: Container(
-                  width: w,
+                  width: strip.widths[covers.indexOf(book)], // Fork
                   height: h,
                   padding: EdgeInsets.all(book['id'] == nextId ? 2 : 1),
                   decoration: BoxDecoration(
@@ -1158,49 +1161,6 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
     lib.refreshLocalProgress();
   }
 
-  /// The series actions as a row of pills under the header, in place of
-  /// the old three-dot menu. Rolling download shows its state.
-  Widget _pillRow(ColorScheme cs, Color accent) {
-    if (_isMarkingAll || _isDownloadingAll) {
-      return SizedBox(
-        height: 34,
-        child: Center(child: SizedBox(width: 18, height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2, color: accent))),
-      );
-    }
-    final items = _actionPills(context);
-    // Wrapped, not scrolled: every action stays in reach with nothing cut
-    // off at the edge.
-    return Wrap(
-      alignment: WrapAlignment.center,
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final p in items)
-          () {
-            final active = p.tint != null;
-            final color = active ? accent : cs.onSurfaceVariant;
-            return Material(
-              color: active ? accent.withValues(alpha: 0.14) : cs.onSurface.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(12),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: p.enabled ? p.onTap : null,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(p.icon, size: 16, color: color),
-                    const SizedBox(width: 6),
-                    Text(p.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: color)),
-                  ]),
-                ),
-              ),
-            );
-          }(),
-      ],
-    );
-  }
-
   /// The series actions. [tint] set on a pill means it is switched on.
   List<ActionPillData> _actionPills(BuildContext ctx) {
     final l = AppLocalizations.of(context)!;
@@ -1222,7 +1182,7 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
                     onTap: _jumpToUpNext),
                 if (hasSeriesId)
                   ActionPillData(
-                    icon: _autoDownloadEnabled ? Icons.downloading_rounded : Icons.download_outlined,
+                    icon: _autoDownloadEnabled ? Icons.sync_rounded : Icons.sync_disabled_rounded, // Fork: unlike Download all
                     label: _autoDownloadEnabled ? l.turnAutoDownloadOff : l.turnAutoDownloadOn,
                     tint: _autoDownloadEnabled ? cs.primary : null,
                     onTap: () async {
@@ -1270,14 +1230,14 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
                   }),
                 if (hasSeriesId)
                   ActionPillData(
-                    icon: _scanExcluded ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                    icon: _scanExcluded ? Icons.notifications_active_outlined : Icons.notifications_off_outlined, // Fork
                     label: _scanExcluded ? l.seriesIncludeInScan : l.seriesExcludeFromScan,
                     onTap: () async {
                       final next = !_scanExcluded;
                       await UpcomingReleasesService.setNeverScan(widget.seriesId!, next);
                       if (mounted) setState(() => _scanExcluded = next);
                     }),
-                ActionPillData(icon: Icons.search_rounded, label: l.seriesBooksFindMissingTitle,
+                ActionPillData(icon: Icons.manage_search_rounded, label: l.seriesBooksFindMissingTitle, // Fork
                   onTap: _findOnAudible),
     ];
   }
@@ -1439,10 +1399,10 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
           ]),
           if (nextUp != null) ...[
             const SizedBox(height: 10),
-            _upNextButton(nextUp, seriesProgress, seriesPercent, accent, onAccent, tt),
+            _forkWithActions(accent, _upNextButton(nextUp, seriesProgress, seriesPercent, accent, onAccent, tt)), // Fork: actions beside it
           ],
           const SizedBox(height: 10),
-          _pillRow(cs, accent),
+          if (nextUp == null) _forkWithActions(accent, null), // Fork: in place of _pillRow
         ],
       ]),
     );
@@ -1521,11 +1481,11 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
               SliverPadding(
                 padding: listPad,
                 sliver: SliverGrid.builder(
-                  gridDelegate: sheetBookGridDelegate(context, childAspectRatio: 0.65),
+                  gridDelegate: sheetBookGridDelegate(context, childAspectRatio: _forkFrames.gridCellRatio), // Fork: room for portrait covers
                   itemCount: _books.length,
                   itemBuilder: (context, index) => _asJumpTarget(
                     _books[index]['id'] == _jumpTargetId,
-                    GridBookTile(item: _books[index], sequenceBadge: _getSequenceString(_books[index])),
+                    _forkGridTile(_books[index]), // Fork: each book's own shape
                   ),
                 ),
               )
@@ -1604,8 +1564,8 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
             child: SizedBox(
               height: 112,
               child: Row(children: [
-                AspectRatio(
-                  aspectRatio: 1,
+                ForkShelfCover( // Fork: each book's own shape
+                  frames: _forkFrames, item: book,
                   child: Stack(children: [
                     Positioned.fill(
                       child: coverUrl != null
