@@ -13,7 +13,6 @@ import '../../services/fork/position_sync_controller.dart';
 import '../adaptive_modal.dart';
 import '../book_detail_sheet.dart' show showBookDetailSheet;
 import '../overlay_toast.dart';
-import '../stackable_sheet.dart';
 import 'tinted_sheet.dart';
 
 // Fork-owned: the BookOrbit Position sync button in the detail icon row and
@@ -198,16 +197,17 @@ VoidCallback? prefetchPositionSync(AuthProvider auth, LibraryProvider lib, Strin
 
 Future<void> showPositionSyncSheet(BuildContext context, PositionSyncController controller, Color accent,
     {Map<String, String> coverHeaders = const {}, Color? tint}) {
-  return showStackableSheet(
+  // As tall as its content, up to the safe area, so a short chain doesn't
+  // open as a full screen of empty sheet.
+  return showModalBottomSheet<void>(
     context: context,
+    isScrollControlled: true,
     useSafeArea: true,
-    initialChildSize: 0.85,
-    maxChildSize: 0.95,
-    builder: (ctx, sc) => _PositionSyncSheet(
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => _PositionSyncSheet(
       controller: controller,
       accent: accent,
       coverHeaders: coverHeaders,
-      scrollController: sc,
       tint: tint,
     ),
   );
@@ -219,14 +219,12 @@ class _PositionSyncSheet extends StatefulWidget {
   final PositionSyncController controller;
   final Color accent;
   final Map<String, String> coverHeaders;
-  final ScrollController scrollController;
   final Color? tint;
 
   const _PositionSyncSheet({
     required this.controller,
     required this.accent,
     required this.coverHeaders,
-    required this.scrollController,
     this.tint,
   });
 
@@ -285,32 +283,69 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      // The book page's own cover gradient, so the sheet reads as part of it.
-      decoration: forkTintedSheetDecoration(context, widget.tint),
-      child: ListenableBuilder(
-        listenable: _c,
-        builder: (context, _) => ListView(
-          controller: widget.scrollController,
-          padding: EdgeInsets.fromLTRB(16, 8, 16, 32 + MediaQuery.of(context).viewPadding.bottom),
-          children: [
-            Center(
-                child: Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 14),
-                    decoration: BoxDecoration(
-                        color: cs.onSurface.withValues(alpha: 0.24), borderRadius: BorderRadius.circular(2)))),
-            ...switch (_page) {
-              _Page.chain => _chainPage(context),
-              _Page.generate => _generatePage(context),
-              _Page.change => _changePage(context),
-            },
-          ],
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+    // Lifted over the keyboard while Change's search field has it; the
+    // bottom inset only counts when the keyboard isn't already covering it.
+    return Padding(
+      padding: EdgeInsets.only(bottom: keyboard),
+      child: Container(
+        // The book page's own cover gradient, so the sheet reads as part of it.
+        decoration: forkTintedSheetDecoration(context, widget.tint),
+        child: ListenableBuilder(
+          listenable: _c,
+          // The handle sits outside the list so dragging it always closes the
+          // sheet. The list shrinks to its page; while the page fits, it takes
+          // no drags, so a drag anywhere moves the sheet. Once it scrolls, a
+          // pull down past its top closes the sheet.
+          builder: (context, _) => Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(padding: const EdgeInsets.only(top: 8), child: forkSheetHandle(context)),
+            Flexible(
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: _closeOnPullDown,
+                  child: ListView(
+                    shrinkWrap: true,
+                    // Not primary, so it only takes drags when it can scroll.
+                    primary: false,
+                    padding: EdgeInsets.fromLTRB(
+                        16, 0, 16, 32 + (keyboard > 0 ? 0 : MediaQuery.viewPaddingOf(context).bottom)),
+                    children: [
+                      ...switch (_page) {
+                        _Page.chain => _chainPage(context),
+                        _Page.generate => _generatePage(context),
+                        _Page.change => _changePage(context),
+                      },
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ]),
         ),
       ),
     );
+  }
+
+  bool _closing = false;
+
+  /// Closes the sheet when the user pulls the scrolled-to-top list down:
+  /// an overscroll past the top (Android) or a bounce well past it (iOS).
+  bool _closeOnPullDown(ScrollNotification n) {
+    if (_closing || n.metrics.axis != Axis.vertical) return false;
+    final pulled = switch (n) {
+      OverscrollNotification(:final overscroll, :final dragDetails) =>
+        dragDetails != null && overscroll < 0 && n.metrics.extentBefore == 0,
+      ScrollUpdateNotification(:final dragDetails) => dragDetails != null && n.metrics.pixels < -48,
+      _ => false,
+    };
+    if (pulled) {
+      _closing = true;
+      Navigator.of(context).maybePop();
+    }
+    return false;
   }
 
   // ─── Chain page ───────────────────────────────────────────

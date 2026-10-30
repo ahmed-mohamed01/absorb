@@ -4,6 +4,7 @@ import '../l10n/app_localizations.dart';
 import '../screens/library_screen.dart';
 import '../utils/read_status.dart';
 import '../services/server_backend.dart';
+import 'fork/sort_sheet_height.dart';
 
 /// Which library tab the sort/filter sheet is being shown for.
 enum LibraryTab { library, series, authors, narrators, lists }
@@ -189,7 +190,7 @@ class _SortFilterSheetState extends State<SortFilterSheet> with SingleTickerProv
                 fontSize: 16, fontWeight: FontWeight.w600, color: cs.primary)),
             ),
           SizedBox(
-            height: _calcHeight(),
+            height: forkLibrarySortHeight(context, _calcHeight(), tab: widget.libraryTab, podcast: widget.isPodcastLibrary, rows: _getSortOptions(l).length), // Fork: fit the sort list
             child: _tabCtrl.length > 1
                 ? TabBarView(controller: _tabCtrl, children: _buildViews(cs, l))
                 : _buildSortTab(cs, l),
@@ -266,7 +267,7 @@ class _SortFilterSheetState extends State<SortFilterSheet> with SingleTickerProv
             onTap: () => widget.onSortChanged(sort),
           );
         }),
-        if (widget.libraryTab == LibraryTab.library && !widget.isPodcastLibrary)
+        if (forkLibraryHasCollapseSwitch(widget.libraryTab, podcast: widget.isPodcastLibrary)) // Fork: shared with the height
           GestureDetector(
             onTap: () {
               setState(() => _collapseSeries = !_collapseSeries);
