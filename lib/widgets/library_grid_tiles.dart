@@ -574,7 +574,9 @@ class GridSeriesTile extends StatelessWidget {
             seriesName: seriesName,
             seriesId: seriesId,
             books: const [],
-            itemIds: itemIds,
+            // Some servers list only the cover books here; a short list would
+            // make the sheet stop at those instead of fetching the series.
+            itemIds: itemIds.length >= numBooks ? itemIds : const [],
             serverUrl: auth.serverUrl,
             token: auth.token,
           );
@@ -699,7 +701,7 @@ class GridSeriesTileDirect extends StatelessWidget {
           seriesName: seriesName,
           seriesId: seriesId.isEmpty ? null : seriesId,
           books: seriesId.isEmpty ? books : const [],
-          itemIds: itemIds,
+          itemIds: itemIds.length >= numBooks ? itemIds : const [],
           serverUrl: auth.serverUrl,
           token: auth.token,
           parentSeriesId: parentSeriesId,
