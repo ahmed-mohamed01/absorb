@@ -26,6 +26,9 @@ const _kDates = 'Dates';
 const _kStarted = 'Started';
 const _kFinished = 'Finished';
 const _kAllActionsHint = 'Edit, reset progress, delete and more';
+const _kListen = 'Listen';
+const _kShowEbook = 'Show the ebook';
+const _kShowAudiobook = 'Show the audiobook';
 String _kPagesCount(int n) => n == 1 ? '1 page' : '$n pages';
 
 /// Per-sheet state the layout needs and the upstream state class doesn't have.
@@ -35,6 +38,9 @@ class _ForkDetailUi {
   // Once the reader picks a tab, the page stops choosing one for them.
   bool userPickedTab = false;
   bool similarFetched = false;
+  // Which cover a book with both an audiobook and an ebook shows in front;
+  // null until the reader swaps, so the page picks from their progress.
+  bool? ebookFront;
 }
 
 final _forkDetailUi = Expando<_ForkDetailUi>();
@@ -140,11 +146,22 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           'duration=${duration.toStringAsFixed(0)}s)');
     }
 
+    // An audiobook with its own ebook, and a cover for each, shows both; the
+    // one in front decides whether the main button listens or reads. It
+    // starts on the cover the page would show on its own, as BookOrbit's
+    // web page does.
+    final dualCovers = auth.isBookOrbit && !lib.isOffline && !isEbookOnly &&
+        media['narration'] == null && ebookFile != null && canReadEbook(ebookFile) && forkHasBothCovers(_item) &&
+        ((_item?['_localCoverUrl'] as String?)?.isEmpty ?? true);
+    final ebookFront = dualCovers && (_ui.ebookFront ??
+        (((_item?['bookOrbit'] as Map?)?['coverVersion'] as String?)?.startsWith('ebook:') ?? false));
+
     final actions = _forkActionButtons(
       context: context, cs: cs, tt: tt, l: l, accent: accent, lib: lib, auth: auth,
-      ebookFile: ebookFile, isEbookOnly: isEbookOnly, textPrimary: textPrimary,
+      ebookFile: ebookFile, isEbookOnly: isEbookOnly, textPrimary: textPrimary || ebookFront,
       progress: progress, isFinished: isFinished, duration: duration, chapters: chapters,
       title: title, authorName: authorName, media: media,
+      dualCovers: dualCovers,
     );
 
     final shownStatus = forkShownStatus(
@@ -286,7 +303,8 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           progress: progress, showInfo: showInfo,
           showPreview: showPreview, chapters: chapters),
       const SizedBox(height: 12),
-      _forkHero(context, cs, tt, l, accent, lib, title: title, subtitle: subtitle, metadata: metadata, seriesEntries: seriesEntries),
+      _forkHero(context, cs, tt, l, accent, lib, title: title, subtitle: subtitle, metadata: metadata, seriesEntries: seriesEntries,
+          dualCovers: dualCovers, ebookFront: ebookFront, auth: auth),
       const SizedBox(height: 20),
       Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
@@ -310,10 +328,14 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         ])),
       ),
       const SizedBox(height: 20),
-      Row(children: [
-        Expanded(child: actions.primary),
-        if (actions.secondary != null) ...[const SizedBox(width: 10), actions.secondary!],
-      ]),
+      // Swapping covers cross-fades the buttons to the other format.
+      AnimatedSwitcher(
+        duration: const Duration(milliseconds: 250),
+        child: Row(key: ValueKey(ebookFront), children: [
+          Expanded(child: actions.primary),
+          if (actions.secondary != null) ...[const SizedBox(width: 10), actions.secondary!],
+        ]),
+      ),
       _forkSyncStatusLine(cs, tt, l, accent),
       // Preview starts from the … menu, which closes; this says it's playing
       // and stops it without going back to the menu.
@@ -537,14 +559,39 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     required String subtitle,
     required Map<String, dynamic> metadata,
     required List<dynamic> seriesEntries,
+    required bool dualCovers,
+    required bool ebookFront,
+    required AuthProvider auth,
   }) {
     final shown = forkDisplayTitle(title: title, subtitle: subtitle, series: seriesEntries);
-    // Every cover gets the same height, two fifths of the page's width (a
-    // square one then takes two fifths of the row); a 2:3 cover is narrower.
-    final coverHeight = ((MediaQuery.sizeOf(context).width - 32) * 0.40).clamp(130.0, 190.0);
-    final coverWidth = _squareCovers ? coverHeight : coverHeight / 1.5;
+    // The watchlist's cover size: 112 x 168 for a 2:3 cover, and a square
+    // one at about the same area.
+    final coverHeight = _squareCovers ? _ForkCoverStack.audioSide : _ForkCoverStack.ebookSize.height;
+    final coverWidth = _squareCovers ? _ForkCoverStack.audioSide : _ForkCoverStack.ebookSize.width;
+    String slotUrl(bool ebook, int width) =>
+        auth.apiService!.getCoverUrl(widget.itemId, width: width, coverSlot: ebook ? 'ebook' : 'audio');
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (_coverUrl != null) ...[
+      if (dualCovers) ...[
+        _ForkCoverStack(
+          ebookFront: ebookFront,
+          cover: (ebook) => CachedNetworkImage(
+            imageUrl: slotUrl(ebook, 800), fit: BoxFit.cover,
+            httpHeaders: lib.mediaHeaders,
+            placeholder: (_, __) => ColoredBox(color: cs.surfaceContainerHigh),
+            errorWidget: (_, __, ___) => ColoredBox(
+              color: cs.surfaceContainerHigh,
+              child: Icon(ebook ? Icons.menu_book_rounded : Icons.headphones_rounded, color: cs.onSurfaceVariant),
+            ),
+          ),
+          onOpenFront: () => _showFullCover(context, slotUrl(ebookFront, 4000), lib.mediaHeaders, title),
+          onSwap: () {
+            HapticFeedback.selectionClick();
+            setState(() => _ui.ebookFront = !ebookFront);
+          },
+          title: title,
+        ),
+        const SizedBox(width: 16),
+      ] else if (_coverUrl != null) ...[
         // Tapping the cover opens it full size; the ripple over it says so.
         Semantics(
           button: true,
@@ -553,7 +600,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
             width: coverWidth,
             height: coverHeight,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
               boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 16, offset: const Offset(0, 4))],
             ),
             clipBehavior: Clip.antiAlias,
@@ -578,23 +625,19 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         const SizedBox(width: 16),
       ],
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(shown.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+        // Spaced like the watchlist's header: title, subtitle, who wrote and
+        // read it, then the series pill and the rating a step further down.
+        Text(shown.title, maxLines: 3, overflow: TextOverflow.ellipsis,
             style: tt.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurface)),
-        // Tight, in reading order: title, subtitle, who wrote and read it,
-        // then the series as a small pill and the rating.
         if (shown.subtitle.isNotEmpty) ...[
-          const SizedBox(height: 2),
-          Text(shown.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 4),
+          Text(shown.subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
         ],
-        const SizedBox(height: 4),
-        _buildAuthorLinks(context, metadata, cs, tt, accent),
-        _buildNarratorLinks(context, metadata, cs, tt, accent),
+        ..._forkByline(context, metadata, cs, tt, accent),
         if (seriesEntries.isNotEmpty) ...[
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           _forkSeriesPill(context, l, accent, seriesEntries),
         ],
-        const SizedBox(height: 4),
-        _forkRatingLine(cs, tt, l),
       ])),
     ]);
   }
@@ -621,73 +664,87 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           _openSeries(context, picked['id'] as String?, picked['name'] as String? ?? '');
         }
       },
-      // A small neutral pill: just the series and its number, with "+N" and
-      // a down chevron only when there are more series to choose from.
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.09),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Flexible(child: Text(label(main), maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.onSurface))),
-          if (others.isNotEmpty) ...[
-            const SizedBox(width: 5),
-            Text('+${others.length}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                color: Theme.of(context).colorScheme.onSurfaceVariant)),
-            Icon(Icons.expand_more_rounded, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
-          ],
-        ]),
-      ),
+      // As on the watchlist: a book icon and the series with its number in
+      // the accent, with "+N" and a down chevron only when there are more
+      // series to choose from.
+      behavior: HitTestBehavior.opaque,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.auto_stories_rounded, size: 14, color: accent),
+        const SizedBox(width: 6),
+        Flexible(child: Text(label(main), maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent))),
+        if (others.isNotEmpty) ...[
+          const SizedBox(width: 5),
+          Text('+${others.length}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          Icon(Icons.expand_more_rounded, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ],
+      ]),
     );
   }
 
-  /// The best-supported rating as one line: a star, the score, how many
-  /// ratings and whose. BookOrbit knows several providers; the one with the
-  /// most ratings stands for them all.
-  Widget _forkRatingLine(ColorScheme cs, TextTheme tt, AppLocalizations l) {
-    Map<String, dynamic>? best;
-    if (context.read<AuthProvider>().isBookOrbit) {
-      for (final b in _providerBadges()) {
-        if (b['rating'] == null) continue;
-        if (best == null || ((b['count'] as num?) ?? 0) > ((best['count'] as num?) ?? 0)) best = b;
-      }
+  /// Who wrote and read the book, laid out like the watchlist's byline, with
+  /// each name in the accent so it reads as tappable: it opens that author
+  /// or narrator.
+  List<Widget> _forkByline(BuildContext context, Map<String, dynamic> metadata, ColorScheme cs, TextTheme tt, Color accent) {
+    final authors = [
+      for (final a in (metadata['authors'] as List<dynamic>? ?? const []))
+        if (a is Map && ((a['name'] as String?) ?? '').isNotEmpty) a,
+    ];
+    final authorName = (metadata['authorName'] as String? ?? '').trim();
+    final narrators = <String>[
+      for (final n in (metadata['narrators'] as List<dynamic>? ?? const []))
+        if (n is String) n.trim() else if (n is Map) ((n['name'] as String?) ?? '').trim(),
+    ].where((s) => s.isNotEmpty).toList();
+    if (narrators.isEmpty) {
+      narrators.addAll((metadata['narratorName'] as String? ?? '').split(',').map((s) => s.trim()).where((s) => s.isNotEmpty));
     }
-    final double rating;
-    final int count;
-    final String source;
-    final VoidCallback? onTap;
-    if (best != null) {
-      rating = (best['rating'] as num).toDouble();
-      count = (best['count'] as num?)?.toInt() ?? 0;
-      source = best['label'] as String;
-      final url = best['url'] as String?;
-      onTap = best['key'] == 'audible' && _asin != null
-          ? () => _showAudibleReviews(context)
-          : url == null ? null : () => _openProviderPage(url);
-    } else if (_rating != null && (_rating!['rating'] as num).toDouble() > 0) {
-      rating = (_rating!['rating'] as num).toDouble();
-      count = (_rating!['count'] as num?)?.toInt() ?? 0;
-      source = 'Audible';
-      onTap = _asin != null ? () => _showAudibleReviews(context) : null;
-    } else {
-      return const SizedBox.shrink();
+
+    // Names separated by commas, the first three shown until "+N" is tapped.
+    Widget names(List<String> all, TextStyle? style, bool expanded, VoidCallback expand, void Function(int) open, {String prefix = ''}) {
+      final visible = expanded || all.length <= 3 ? all : all.sublist(0, 3);
+      final link = style?.copyWith(color: accent, fontWeight: FontWeight.w500);
+      return Wrap(children: [
+        if (prefix.isNotEmpty) Text(prefix, style: style),
+        for (var i = 0; i < visible.length; i++)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => open(i),
+            child: Text.rich(TextSpan(children: [
+              TextSpan(text: visible[i], style: link),
+              if (i < visible.length - 1) TextSpan(text: ', ', style: style),
+            ])),
+          ),
+        if (visible.length < all.length)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: expand,
+            child: Text('  +${all.length - visible.length}', style: style?.copyWith(fontWeight: FontWeight.w600)),
+          ),
+      ]);
     }
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
-      child: Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Row(mainAxisSize: MainAxisSize.min, children: [
-        const Icon(Icons.star_rounded, size: 18, color: Color(0xFFF5B83D)),
-        const SizedBox(width: 4),
-        Text(rating.toStringAsFixed(1), style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(width: 6),
-        Flexible(child: Text(
-          count > 0 ? '${_BookDetailSheetContentState._formatRatingCount(count, l.localeName)} · $source' : source,
-          maxLines: 1, overflow: TextOverflow.ellipsis, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant))),
-        if (onTap != null) Icon(Icons.chevron_right_rounded, size: 16, color: cs.onSurfaceVariant),
-      ])),
-    );
+
+    final byStyle = tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant);
+    final narratedStyle = tt.bodySmall?.copyWith(color: cs.onSurfaceVariant);
+    final narratedParts = AppLocalizations.of(context)!.narratedBy('||X||').split('||X||');
+    return [
+      if (authors.isNotEmpty || authorName.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        authors.isEmpty
+            ? Text(authorName, style: byStyle)
+            : names([for (final a in authors) a['name'] as String], byStyle, _authorsExpanded,
+                () => setState(() => _authorsExpanded = true), (i) {
+                final id = authors[i]['id'] as String? ?? '';
+                if (id.isNotEmpty) showAuthorDetailSheet(context, authorId: id, authorName: authors[i]['name'] as String);
+              }),
+      ],
+      if (narrators.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        names(narrators, narratedStyle, _narratorsExpanded, () => setState(() => _narratorsExpanded = true),
+            (i) => showNarratorBooksSheet(context, narratorName: narrators[i]),
+            prefix: narratedParts.first),
+      ],
+    ];
   }
 
   Widget _forkPreviewLine(ColorScheme cs, TextTheme tt, Color accent, List<dynamic> chapters, double duration) {
@@ -1101,6 +1158,125 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           ]))),
         ]),
       ))),
+    );
+  }
+}
+
+/// A book with both an audiobook and an ebook shows both covers, as
+/// BookOrbit's web page does (`BookCoverStack.vue`): the one in front opens
+/// full size, the other shows a tilted strip behind it, and tapping that
+/// one (or swiping sideways) brings it forward. The stage is as tall as the
+/// portrait cover and never changes size, so swapping doesn't move the page.
+class _ForkCoverStack extends StatelessWidget {
+  final bool ebookFront;
+  final Widget Function(bool ebook) cover;
+  final VoidCallback onSwap;
+  final VoidCallback onOpenFront;
+  final String title;
+
+  const _ForkCoverStack({
+    required this.ebookFront,
+    required this.cover,
+    required this.onSwap,
+    required this.onOpenFront,
+    required this.title,
+  });
+
+  static const ebookSize = Size(112, 168);
+  static const audioSide = 140.0;
+  // BookOrbit's stage is 1 : 1.29, here at the watchlist cover's height.
+  static const height = 168.0;
+  static const width = height / 1.29;
+  // Its CSS, as shares of the stage: the portrait cover's width, the square
+  // one's size and top, and where each starts when it's behind.
+  static const _portrait = Size(width * 0.86, height);
+  static const _square = Size(width * 0.95, height * 0.7364);
+  static const _squareTop = height * 0.2636;
+  static const _bleed = width * 0.06;
+  static const _portraitBackStart = width * 0.1346 + _bleed;
+  static const _squareBackStart = width * 0.0557 + _bleed;
+  // 3 degrees, the ebook tipped one way and the audiobook the other.
+  static const _tilt = 0.0524;
+  static const _backScale = 0.94;
+  static const _ease = Cubic(0.3, 0.9, 0.25, 1);
+
+  static Rect _rect(bool ebook, bool front) => ebook
+      ? Offset(front ? 0 : _portraitBackStart, 0) & _portrait
+      : Offset(front ? 0 : _squareBackStart, _squareTop) & _square;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onHorizontalDragEnd: (d) {
+        if ((d.primaryVelocity ?? 0).abs() > 200) onSwap();
+      },
+      child: SizedBox(
+        width: width,
+        height: height,
+        // t runs 0 (audiobook in front) to 1 (ebook in front).
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(end: ebookFront ? 1 : 0),
+          duration: const Duration(milliseconds: 500),
+          curve: _ease,
+          builder: (context, t, _) {
+            final ebook = _card(context, ebook: true, frontness: t);
+            final audio = _card(context, ebook: false, frontness: 1 - t);
+            // The new front cover goes on top at once and slides into place.
+            return Stack(clipBehavior: Clip.none, children: ebookFront ? [audio, ebook] : [ebook, audio]);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _card(BuildContext context, {required bool ebook, required double frontness}) {
+    final rect = Rect.lerp(_rect(ebook, false), _rect(ebook, true), frontness)!;
+    final isFront = ebook == ebookFront;
+    final back = 1 - frontness;
+    Widget chipIcon(IconData icon) => Icon(icon, size: 10, color: Colors.white);
+    return Positioned.fromRect(
+      rect: rect,
+      child: Transform.rotate(
+        angle: (ebook ? _tilt : -_tilt) * back,
+        child: Transform.scale(
+          scale: 1 - (1 - _backScale) * back,
+          child: Semantics(
+            button: true,
+            label: isFront ? title : (ebook ? _kShowEbook : _kShowAudiobook),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 15, offset: const Offset(0, 10))],
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(fit: StackFit.expand, children: [
+                cover(ebook),
+                // The cover behind is a touch darker.
+                IgnorePointer(child: ColoredBox(color: Colors.black.withValues(alpha: 0.08 * back))),
+                // Each cover's format, and on the one behind, that it swaps.
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: IgnorePointer(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(3)),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        chipIcon(ebook ? Icons.menu_book_rounded : Icons.headphones_rounded),
+                        if (!isFront) ...[const SizedBox(width: 3), chipIcon(Icons.swap_horiz_rounded)],
+                      ]),
+                    ),
+                  ),
+                ),
+                Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(onTap: isFront ? onOpenFront : onSwap),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

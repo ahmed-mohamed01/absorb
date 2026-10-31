@@ -3062,7 +3062,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     final commaStyle = tt.bodyMedium?.copyWith(color: accent);
 
     return Wrap(
-      alignment: WrapAlignment.start,
+      alignment: WrapAlignment.center,
       children: [
         for (int i = 0; i < visible.length; i++)
           _nameLink(
@@ -3134,7 +3134,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Wrap(
-        alignment: WrapAlignment.start,
+        alignment: WrapAlignment.center,
         children: [
           if (prefix.isNotEmpty)
             Padding(

@@ -16,6 +16,17 @@ void main() {
     expect(forkBookFrame(null), isNull);
   });
 
+  test('both covers only when neither slot is stamped missing', () {
+    Map<String, dynamic> v(Object? version) => {'bookOrbit': {'coverVersion': version}};
+    expect(forkHasBothCovers(v('audio:2026-10-26T18:59:07.364Z:2026-10-25T16:00:00.557Z')), isTrue);
+    expect(forkHasBothCovers(v('ebook:2026-10-25T16:00:00.557Z:2026-10-26T18:59:07.364Z')), isTrue);
+    expect(forkHasBothCovers(v('audio:2026-10-26T18:59:07.364Z:-')), isFalse);
+    expect(forkHasBothCovers(v('audio:-:2026-01-01T00:00:00.000Z')), isFalse);
+    expect(forkHasBothCovers(v('legacy:x')), isFalse);
+    expect(forkHasBothCovers(v(null)), isFalse);
+    expect(forkHasBothCovers(null), isFalse);
+  });
+
   test('a mixed Dashboard shelf gives each book its shape in a portrait slot', () {
     final frames = ForkShelfFrames([_book(1), _book(2 / 3), _book()], 1.0, ownFrames: true);
     expect(frames.mixed, isTrue);

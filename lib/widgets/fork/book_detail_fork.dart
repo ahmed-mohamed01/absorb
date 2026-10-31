@@ -87,7 +87,7 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          box(_squareCovers ? 170 : 170 * 2 / 3, 170, r: 12),
+          box(_squareCovers ? 140 : 112, _squareCovers ? 140 : 168, r: 12),
           const SizedBox(width: 16),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const SizedBox(height: 6),
@@ -128,6 +128,9 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
     required String title,
     required String authorName,
     required Map<String, dynamic> media,
+    // An audiobook with its own ebook: the buttons say Listen and Read, and
+    // [textPrimary] says which of them is the main one.
+    bool dualCovers = false,
   }) {
     final Widget primaryButton = _lookingForNarration
         ? _lookingButton(accent, _coverScheme?.onPrimary ?? cs.onPrimary)
@@ -141,8 +144,10 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
           // reading percent as its plain progress, with no ebook field.
           // A narrated EPUB keeps its place as the book's own progress, often
           // with no separate ebook position, so the further of the two shows.
+          // A book with its own audiobook keeps listening there, so its Read
+          // button shows the reading alone.
           final saved = lib.getEbookProgress(widget.itemId);
-          final ebookProgress = saved > progress ? saved : progress;
+          final ebookProgress = dualCovers || saved > progress ? saved : progress;
           // Under half a percent would read "0%", so it waits for 1%.
           final showFill = ebookProgress >= 0.005 && ebookProgress < 1 && !isFinished;
           return SizedBox(
@@ -303,7 +308,7 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
                               ? Icon(Icons.download_rounded, size: 24, color: onAccent)
                               : isFinished
                                   ? AbsorbReplayIcon(size: 24, color: onAccent)
-                                  : Icon(Icons.waves_rounded, size: 24, color: onAccent),
+                                  : Icon(dualCovers ? Icons.headphones_rounded : Icons.waves_rounded, size: 24, color: onAccent),
                       const SizedBox(width: 8),
                       Flexible(child: Text(
                         showAbsorbingState
@@ -314,7 +319,9 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
                                     ? Wording.of(context).downloadToAbsorb
                                     : isFinished
                                         ? Wording.of(context).absorbAgain
-                                        : Wording.of(context).absorb,
+                                        : dualCovers
+                                            ? _kListen
+                                            : Wording.of(context).absorb,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: tt.titleMedium
@@ -352,10 +359,10 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
     final Widget? secondaryButton = _lookingForNarration
         ? null
         : textPrimary
-            ? (media['narration'] != null && !isEbookOnly
+            ? ((media['narration'] != null || dualCovers) && !isEbookOnly
                 ? _secondaryIconButton(accent, Icons.headphones_rounded,
                     lib.isOffline && !DownloadService().isDownloaded(widget.itemId) ? null : startListening,
-                    progress: progress, tooltip: Wording.of(context).absorb)
+                    progress: progress, tooltip: dualCovers ? _kListen : Wording.of(context).absorb)
                 : null)
             : (ebookFile != null && canReadEbook(ebookFile)
                 ? _secondaryIconButton(accent, Icons.menu_book_rounded, () => _openEbookReader(context, auth, ebookFile, title),
