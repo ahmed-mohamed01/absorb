@@ -1,10 +1,13 @@
 import 'package:flutter/widgets.dart';
 
 import '../../services/fork/cover_frame.dart';
+import '../../services/fork/fork_settings.dart';
 
 // Fork-owned: the cover shapes where each BookOrbit book comes in its own
 // frame, in a Dashboard shelf's sheet (section_detail_sheet.dart) and in the
-// series sheet (series_books_sheet.dart). See FORK_NOTES.md.
+// series sheet (series_books_sheet.dart), and, while
+// ForkSettings.ownCoverShapes is on, the Library grid and the author and
+// narrator sheets. See FORK_NOTES.md.
 
 /// The cover shapes of one shelf's books. With [ownFrames] each book takes
 /// the frame BookOrbit gave it; otherwise, or for a book with none, the
@@ -131,3 +134,29 @@ class ForkShelfGridTile extends StatelessWidget {
     });
   }
 }
+
+/// The cover shapes of a grid of [items] outside the shelf and series
+/// sheets (the Library grid, the author and narrator sheets): each book's
+/// own while [ForkSettings.ownCoverShapes] is on, else all [fallback], the
+/// shape that grid had before.
+///
+/// These grids lay covers out as BookOrbit's app does: on a grid of mixed
+/// shapes every cover sits in a square slot ([forkGridSlot]), a square
+/// cover filling it and a portrait one as tall but narrower, centred
+/// ([forkCoverInSlot]). Rows stay square, so there is no gap above square
+/// covers and no blur around portrait ones.
+ForkShelfFrames forkGridFrames(List<dynamic> items, double fallback) =>
+    ForkShelfFrames(items, fallback, ownFrames: ForkSettings.ownCoverShapes);
+
+/// The shape of [item]'s cover slot in a grid from [forkGridFrames]:
+/// square on a grid of mixed shapes, otherwise the cover's own shape.
+double forkGridSlot(ForkShelfFrames frames, Object? item) => frames.mixed ? 1.0 : frames.of(item);
+
+/// Whether a grid from [forkGridFrames] needs portrait-height cells: only
+/// when every cover is portrait.
+bool forkGridTall(ForkShelfFrames frames) => frames.hasPortrait && !frames.mixed;
+
+/// [cover] centred in a [slot]-shaped space as tall as it is, or [cover]
+/// alone when there is no slot.
+Widget forkCoverInSlot(double? slot, Widget cover) =>
+    slot == null ? cover : AspectRatio(aspectRatio: slot, child: Center(child: cover));

@@ -64,6 +64,7 @@ import '../widgets/server_admin_status_badges.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/sign_in_again.dart';
 import '../widgets/fork/watchlist_settings.dart';
+import '../widgets/fork/fork_settings_screen.dart';
 import '../services/fork/library_flow.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -4703,6 +4704,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                     const WatchlistSettingsTile(),
+                    const ForkSettingsTile(),
                     const Divider(height: 1, indent: 16, endIndent: 16),
                     ListTile(
                       leading: Icon(Icons.menu_book_rounded, color: cs.primary),

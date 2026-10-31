@@ -47,6 +47,7 @@ import 'screens/app_shell.dart';
 import 'widgets/auth_loading_screen.dart';
 import 'widgets/beta_logging_notice.dart';
 import 'widgets/setup_link_login.dart';
+import 'services/fork/fork_settings.dart';
 
 /// Global notifier so any widget (e.g. settings) can change the theme instantly.
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.dark);
@@ -254,6 +255,7 @@ void main() async {
     PlayerSettings.showEbookBadge = await PlayerSettings.getShowEbookBadge();
     PlayerSettings.mp3IndexSeeking = await PlayerSettings.getMp3IndexSeeking();
     PlayerSettings.coverSize = await PlayerSettings.getCoverSize();
+    await ForkSettings.load(); // Fork
     PlayerSettings.cardButtonFill = await PlayerSettings.getCardButtonFill();
     // Restore last cover seed color so the theme doesn't flash on startup
     {
@@ -736,6 +738,7 @@ class _AuthGateState extends State<AuthGate> {
     PlayerSettings.showEbookBadge = await PlayerSettings.getShowEbookBadge();
     PlayerSettings.mp3IndexSeeking = await PlayerSettings.getMp3IndexSeeking();
     PlayerSettings.coverSize = await PlayerSettings.getCoverSize();
+    await ForkSettings.load(); // Fork
     PlayerSettings.cardButtonFill = await PlayerSettings.getCardButtonFill();
     // Rotation lock: main() applied it before scope was active, so that pass
     // read the never-written unscoped key and always came up unlocked. The

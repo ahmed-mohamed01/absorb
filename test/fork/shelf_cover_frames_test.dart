@@ -1,4 +1,5 @@
 import 'package:absorb/services/fork/cover_frame.dart';
+import 'package:absorb/services/fork/fork_settings.dart';
 import 'package:absorb/widgets/fork/shelf_cover_frames.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -137,5 +138,67 @@ void main() {
     expect(strip.lefts[2], closeTo(60 * 0.68 + 90 * 0.68, 0.0001));
     expect(strip.width, closeTo(strip.lefts[2] + 60, 0.0001));
     expect(forkCoverStrip([], frames).width, 0);
+  });
+
+  group('grids laid out as BookOrbit does', () {
+    tearDown(() => ForkSettings.ownCoverShapes = true);
+
+    test('a mixed grid gives every cover a square slot and square cells', () {
+      final frames = forkGridFrames([_book(1), _book(2 / 3)], 1.0);
+      expect(forkGridSlot(frames, _book(1)), 1.0);
+      expect(forkGridSlot(frames, _book(2 / 3)), 1.0);
+      expect(frames.of(_book(2 / 3)), forkPortraitFrame);
+      expect(forkGridTall(frames), isFalse);
+    });
+
+    test('an all-portrait grid keeps portrait slots and tall cells', () {
+      final frames = forkGridFrames([_book(2 / 3), _book(2 / 3)], 1.0);
+      expect(forkGridSlot(frames, _book(2 / 3)), forkPortraitFrame);
+      expect(forkGridTall(frames), isTrue);
+    });
+
+    test('an all-square grid stays square under the rectangle setting', () {
+      final frames = forkGridFrames([_book(1), _book(1)], forkPortraitFrame);
+      expect(forkGridSlot(frames, _book(1)), 1.0);
+      expect(forkGridTall(frames), isFalse);
+    });
+
+    test('books without a frame follow the cover setting', () {
+      final square = forkGridFrames([_book(), _book()], 1.0);
+      expect(forkGridSlot(square, _book()), 1.0);
+      expect(forkGridTall(square), isFalse);
+      final rect = forkGridFrames([_book(), _book()], forkPortraitFrame);
+      expect(forkGridSlot(rect, _book()), forkPortraitFrame);
+      expect(forkGridTall(rect), isTrue);
+    });
+
+    test('with the switch off every cover takes the cover setting', () {
+      ForkSettings.ownCoverShapes = false;
+      final frames = forkGridFrames([_book(1), _book(2 / 3)], 1.0);
+      expect(frames.of(_book(2 / 3)), 1.0);
+      expect(forkGridSlot(frames, _book(2 / 3)), 1.0);
+      expect(forkGridTall(frames), isFalse);
+    });
+
+    testWidgets('a portrait cover in a square slot is as tall, narrower and centred', (tester) async {
+      const key = Key('cover');
+      await tester.pumpWidget(Center(
+        child: SizedBox(
+          width: 90,
+          child: forkCoverInSlot(1.0, const AspectRatio(aspectRatio: 2 / 3, child: SizedBox(key: key))),
+        ),
+      ));
+      final slot = tester.getRect(find.byType(Center).last);
+      final cover = tester.getRect(find.byKey(key));
+      expect(slot.size, const Size(90, 90));
+      expect(cover.height, 90);
+      expect(cover.width, closeTo(60, 0.001));
+      expect(cover.center.dx, closeTo(slot.center.dx, 0.001));
+    });
+
+    test('no slot leaves the cover as it is', () {
+      const cover = SizedBox(key: Key('cover'));
+      expect(forkCoverInSlot(null, cover), same(cover));
+    });
   });
 }

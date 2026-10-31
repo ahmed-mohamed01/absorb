@@ -19,6 +19,7 @@ import 'series_books_sheet.dart';
 import 'author_books_sheet.dart';
 import 'fork/watchlist_cover_badges.dart';
 import 'fork/watchlist_author_tiles.dart';
+import 'fork/shelf_cover_frames.dart';
 import 'fork/watchlist_series_actions.dart';
 import '../services/fork/watchlist_info.dart';
 
@@ -31,6 +32,7 @@ class GridBookTile extends StatefulWidget {
   final String? sequenceBadge;
   final bool showSubtitle;
   final bool showAuthor; // Fork: series sheets leave it out
+  final double? coverSlot; // Fork: the cover's slot when it is narrower, as BookOrbit lays grids out
   final bool selectionMode;
   final bool selected;
   final VoidCallback? onSelectionToggle;
@@ -42,6 +44,7 @@ class GridBookTile extends StatefulWidget {
     this.sequenceBadge,
     this.showSubtitle = false,
     this.showAuthor = true,
+    this.coverSlot,
     this.selectionMode = false,
     this.selected = false,
     this.onSelectionToggle,
@@ -125,7 +128,7 @@ class _GridBookTileState extends State<GridBookTile> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Cover
-          AspectRatio(
+          forkCoverInSlot(widget.coverSlot, AspectRatio( // Fork
             aspectRatio: widget.coverAspectRatio,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
@@ -279,7 +282,7 @@ class _GridBookTileState extends State<GridBookTile> {
                 ],
               ),
             ),
-          ),
+          )),
           const SizedBox(height: 5),
           // Title
           Text(

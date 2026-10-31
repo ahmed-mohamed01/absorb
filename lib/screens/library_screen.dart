@@ -1016,6 +1016,7 @@ class LibraryScreenState extends State<LibraryScreen>
       final newRectCovers = values[2];
       final newShowSubtitles = values[3];
       if (!mounted) return;
+      setState(() {}); // Fork: ForkSettings.ownCoverShapes may have changed
       final coversChanged = newRectCovers != _rectangleCovers;
       if (coversChanged) {
         setState(() => _rectangleCovers = newRectCovers);

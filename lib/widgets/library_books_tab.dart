@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_localizations.dart';
 import '../screens/library_screen.dart';
 import 'books_sheet_shared.dart';
+import 'fork/shelf_cover_frames.dart';
 import 'library_grid_tiles.dart';
 
 class LibraryBooksTab extends StatelessWidget {
@@ -74,6 +75,7 @@ class LibraryBooksTab extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final l = AppLocalizations.of(context)!;
+    final frames = forkGridFrames(items, coverAspectRatio); // Fork: each book's own shape
 
     final headers = <Widget>[if (headerSliver != null) headerSliver!];
 
@@ -215,12 +217,12 @@ class LibraryBooksTab extends StatelessWidget {
             sliver: SliverGrid(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: cols,
-                childAspectRatio: rectangleCovers ? 0.48 : 0.68,
+                childAspectRatio: forkGridTall(frames) ? 0.48 : 0.68, // Fork: portrait cells only when every cover is
                 // Subtitles add a line under every title, and how much room
                 // that needs depends on the cover size, so size the cell from
                 // the tile itself rather than from a second fixed ratio.
                 mainAxisExtent: showSubtitles
-                    ? coverGridTileWidth(context) / (rectangleCovers ? 0.48 : 0.68)
+                    ? coverGridTileWidth(context) / (forkGridTall(frames) ? 0.48 : 0.68)
                         + coverGridSubtitleHeight(context)
                     : null,
                 crossAxisSpacing: 10,
@@ -254,12 +256,13 @@ class LibraryBooksTab extends StatelessWidget {
                   }
                   final item = items[index];
                   if (item.containsKey('collapsedSeries')) {
-                    return GridSeriesTile(item: item, coverAspectRatio: coverAspectRatio);
+                    return GridSeriesTile(item: item, coverAspectRatio: forkGridSlot(frames, item)); // Fork
                   }
                   final itemId = item['id'] as String?;
                   return GridBookTile(
                     item: item,
-                    coverAspectRatio: coverAspectRatio,
+                    coverAspectRatio: frames.of(item), // Fork: each book's own shape
+                    coverSlot: forkGridSlot(frames, item),
                     showSubtitle: showSubtitles,
                     selectionMode: selectionMode,
                     selected: itemId != null && selectedItemIds.contains(itemId),

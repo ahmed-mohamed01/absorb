@@ -15,6 +15,7 @@ import 'library_grid_tiles.dart';
 import 'library_search_results.dart';
 import 'series_books_sheet.dart';
 import 'stackable_sheet.dart';
+import 'fork/shelf_cover_frames.dart';
 import 'fork/watchlist_author_settings_sheet.dart';
 import 'fork/watchlist_series_actions.dart';
 import '../services/api_service.dart';
@@ -401,9 +402,12 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
 
   Widget _buildGridView(ColorScheme cs, TextTheme tt, LibraryProvider lib,
       List<_BookSection> sections, List<Widget> headerWidgets, double bottomPad, AppLocalizations l) {
+    // Fork: each book's own shape, sized by the tiles shown (a series by its first book)
+    double cellRatio(ForkShelfFrames f) => forkGridTall(f) ? f.gridCellRatio : 0.65;
     if (_groupBySeries) {
       // Collapsed: mix series tiles and standalone book tiles in a grid
       final collapsed = _buildCollapsedItems(sections);
+      final frames = forkGridFrames([for (final c in collapsed) c is _BookSection ? c.books.firstOrNull : c], 1.0); // Fork
       return CustomScrollView(
         controller: widget.scrollController,
         slivers: [
@@ -413,14 +417,16 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
             sliver: SliverGrid(
               gridDelegate: sheetBookGridDelegate(
                 context,
-                childAspectRatio: 0.65,
+                childAspectRatio: cellRatio(frames),
               ),
               delegate: SliverChildBuilderDelegate((_, i) {
                 final item = collapsed[i];
                 if (item is _BookSection) {
-                  return _collapsedSeriesGridTile(cs, tt, lib, item);
+                  return _collapsedSeriesGridTile(cs, tt, lib, item, // Fork
+                      coverAspectRatio: forkGridSlot(frames, item.books.firstOrNull));
                 }
-                return GridBookTile(item: item as Map<String, dynamic>);
+                return GridBookTile(item: item as Map<String, dynamic>, // Fork: each book's own shape
+                    coverAspectRatio: frames.of(item), coverSlot: forkGridSlot(frames, item));
               }, childCount: collapsed.length),
             ),
           ),
@@ -428,6 +434,7 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
       );
     }
     // Non-collapsed grid with series dividers
+    final frames = forkGridFrames([for (final s in sections) ...s.books], 1.0); // Fork
     return CustomScrollView(
       controller: widget.scrollController,
       slivers: [
@@ -439,10 +446,11 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
             sliver: SliverGrid(
               gridDelegate: sheetBookGridDelegate(
                 context,
-                childAspectRatio: 0.65,
+                childAspectRatio: cellRatio(frames),
               ),
               delegate: SliverChildBuilderDelegate(
-                (_, i) => GridBookTile(item: section.books[i], sequenceBadge: _sequenceFor(section.books[i], section.label)?.replaceFirst('#', '')),
+                (_, i) => GridBookTile(item: section.books[i], sequenceBadge: _sequenceFor(section.books[i], section.label)?.replaceFirst('#', ''),
+                    coverAspectRatio: frames.of(section.books[i]), coverSlot: forkGridSlot(frames, section.books[i])), // Fork
                 childCount: section.books.length,
               ),
             ),
@@ -516,12 +524,13 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
     );
   }
 
-  Widget _collapsedSeriesGridTile(ColorScheme cs, TextTheme tt, LibraryProvider lib, _BookSection section) {
+  Widget _collapsedSeriesGridTile(ColorScheme cs, TextTheme tt, LibraryProvider lib, _BookSection section,
+      {double coverAspectRatio = 1.0}) {
     return GridSeriesTileDirect(series: {
       'name': section.label,
       'id': section.seriesId ?? '',
       'books': section.books,
-    });
+    }, coverAspectRatio: coverAspectRatio);
   }
 
 

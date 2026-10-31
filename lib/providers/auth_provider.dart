@@ -22,6 +22,7 @@ import '../l10n/app_localizations.dart';
 import '../main.dart' show rootNavigatorKey;
 import '../widgets/overlay_toast.dart';
 import '../utils/server_url.dart';
+import '../services/fork/fork_settings.dart';
 
 class AuthProvider extends ChangeNotifier {
   String? _accessToken;
@@ -1518,6 +1519,7 @@ class AuthProvider extends ChangeNotifier {
     PlayerSettings.showEbookBadge = await PlayerSettings.getShowEbookBadge();
     PlayerSettings.mp3IndexSeeking = await PlayerSettings.getMp3IndexSeeking();
     PlayerSettings.coverSize = await PlayerSettings.getCoverSize();
+    await ForkSettings.load(); // Fork
     PlayerSettings.cardButtonFill = await PlayerSettings.getCardButtonFill();
 
     // Reload EQ settings from the new account's scope. Without this the

@@ -5,6 +5,7 @@ import '../providers/auth_provider.dart';
 import '../providers/library_provider.dart';
 import '../services/audio_player_service.dart';
 import 'books_sheet_shared.dart';
+import 'fork/shelf_cover_frames.dart';
 import 'library_grid_tiles.dart';
 import 'library_search_results.dart';
 import 'stackable_sheet.dart';
@@ -142,6 +143,7 @@ class _NarratorBooksSheetState extends State<NarratorBooksSheet> {
       );
     }
 
+    final frames = forkGridFrames(_books, 1.0); // Fork: each book's own shape
     return CustomScrollView(
       controller: widget.scrollController,
       slivers: [
@@ -149,9 +151,10 @@ class _NarratorBooksSheetState extends State<NarratorBooksSheet> {
         SliverPadding(
           padding: EdgeInsets.fromLTRB(16, 0, 16, bottomPad),
           sliver: SliverGrid(
-            gridDelegate: sheetBookGridDelegate(context),
+            gridDelegate: sheetBookGridDelegate(context,
+                childAspectRatio: forkGridTall(frames) ? frames.gridCellRatio : 0.55), // Fork: portrait cells only when every cover is
             delegate: SliverChildBuilderDelegate(
-              (_, i) => GridBookTile(item: _books[i]),
+              (_, i) => GridBookTile(item: _books[i], coverAspectRatio: frames.of(_books[i]), coverSlot: forkGridSlot(frames, _books[i])), // Fork
               childCount: _books.length,
             ),
           ),
