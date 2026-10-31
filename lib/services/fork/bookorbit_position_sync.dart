@@ -1,9 +1,10 @@
 part of '../api_service.dart';
 
-// Fork-owned: BookOrbit position sync over the server's own API (edition
-// links, reading alignment, Storyteller read-alongs, Audiobookshelf sync)
-// and its wire models. The server does the matching and building; this only
-// asks. The hook is the `part` line in api_service.dart. See FORK_NOTES.md.
+// Fork-owned: BookOrbit position sync over the server's own API for one
+// book's files (reading alignment, upstream's read-aloud sync and generator,
+// Audiobookshelf sync) and its wire models. The server does the matching and
+// building; this only asks. The hook is the `part` line in api_service.dart.
+// See FORK_NOTES.md.
 
 int? _psInt(Object? v) => v is num ? v.round() : (v is String ? int.tryParse(v) : null);
 
@@ -12,6 +13,8 @@ double? _psDouble(Object? v) => v is num ? v.toDouble() : null;
 String? _psString(Object? v) => v is String ? v : null;
 
 Map<String, dynamic>? _psMap(Object? v) => v is Map ? v.cast<String, dynamic>() : null;
+
+Iterable<Map<String, dynamic>> _psMaps(Object? v) => (v is List ? v : const []).whereType<Map>().map((m) => m.cast());
 
 /// `not_configured` -> `notConfigured`, to look the server's snake_case up
 /// in a Dart enum.
@@ -30,162 +33,10 @@ class PositionSyncRequestFailure implements Exception {
   String toString() => 'PositionSyncRequestFailure($status): $message';
 }
 
-class EditionLinkWire {
-  final int id;
-  final int? textBookId;
-  final int audioBookId;
-  final int? readAlongBookId;
-  const EditionLinkWire({required this.id, this.textBookId, required this.audioBookId, this.readAlongBookId});
-
-  factory EditionLinkWire.fromJson(Map<String, dynamic> j) => EditionLinkWire(
-        id: _psInt(j['id']) ?? 0,
-        textBookId: _psInt(j['textBookId']),
-        audioBookId: _psInt(j['audioBookId']) ?? 0,
-        readAlongBookId: _psInt(j['readAlongBookId']),
-      );
-}
-
-class EditionLinkMemberWire {
-  final int id;
-  final String? title;
-  final String? authorName;
-  final String? coverVersion;
-  final int? progressPercentage;
-  final int? narrationPercentage;
-  const EditionLinkMemberWire({
-    required this.id,
-    this.title,
-    this.authorName,
-    this.coverVersion,
-    this.progressPercentage,
-    this.narrationPercentage,
-  });
-
-  factory EditionLinkMemberWire.fromJson(Map<String, dynamic> j) => EditionLinkMemberWire(
-        id: _psInt(j['id']) ?? 0,
-        title: _psString(j['title']),
-        authorName: _psString(j['authorName']),
-        coverVersion: _psString(j['coverVersion']),
-        progressPercentage: _psInt(_psMap(j['progress'])?['percentage']),
-        narrationPercentage: _psInt(j['narrationPercentage']),
-      );
-}
-
-class EditionLinkMembersWire {
-  final EditionLinkMemberWire? text;
-  final EditionLinkMemberWire audio;
-  final EditionLinkMemberWire? readAlong;
-  const EditionLinkMembersWire({this.text, required this.audio, this.readAlong});
-
-  static EditionLinkMembersWire? fromJson(Map<String, dynamic>? j) {
-    final audio = _psMap(j?['audio']);
-    if (j == null || audio == null) return null;
-    final text = _psMap(j['text']);
-    final readAlong = _psMap(j['readAlong']);
-    return EditionLinkMembersWire(
-      text: text == null ? null : EditionLinkMemberWire.fromJson(text),
-      audio: EditionLinkMemberWire.fromJson(audio),
-      readAlong: readAlong == null ? null : EditionLinkMemberWire.fromJson(readAlong),
-    );
-  }
-}
-
-class EditionLinkCandidateWire {
-  final int bookId;
-  final String? title;
-  final String? authorName;
-  final String? coverVersion;
-
-  /// 0..100.
-  final int score;
-  final int? progress;
-
-  /// The proposal is the pair of a read-along build, so its score means
-  /// nothing.
-  final bool fromBuild;
-  const EditionLinkCandidateWire({
-    required this.bookId,
-    this.title,
-    this.authorName,
-    this.coverVersion,
-    this.score = 0,
-    this.progress,
-    this.fromBuild = false,
-  });
-
-  factory EditionLinkCandidateWire.fromJson(Map<String, dynamic> j) => EditionLinkCandidateWire(
-        bookId: _psInt(j['bookId']) ?? 0,
-        title: _psString(j['title']),
-        authorName: _psString(j['authorName']),
-        coverVersion: _psString(j['coverVersion']),
-        score: _psInt(j['score']) ?? 0,
-        progress: _psInt(j['progress']),
-        fromBuild: j['fromBuild'] == true,
-      );
-}
-
-class EditionLinkCounterpartWire {
-  final int id;
-  final String? title;
-  final String? authorName;
-  final String? coverVersion;
-  const EditionLinkCounterpartWire({required this.id, this.title, this.authorName, this.coverVersion});
-
-  factory EditionLinkCounterpartWire.fromJson(Map<String, dynamic> j) => EditionLinkCounterpartWire(
-        id: _psInt(j['id']) ?? 0,
-        title: _psString(j['title']),
-        authorName: _psString(j['authorName']),
-        coverVersion: _psString(j['coverVersion']),
-      );
-}
-
-enum EditionLinkRole { text, audio, readAlong }
-
-class EditionLinkForBookWire {
-  final EditionLinkWire? link;
-  final EditionLinkCandidateWire? proposed;
-  final EditionLinkCounterpartWire? counterpart;
-  final EditionLinkRole? role;
-  final EditionLinkMembersWire? members;
-  final int? thisBookProgress;
-  final int? pickedProgress;
-
-  /// A generated read-along whose pair this reader cannot see or relink, so
-  /// nothing is offered for it.
-  final bool readAlongOutput;
-  const EditionLinkForBookWire({
-    this.link,
-    this.proposed,
-    this.counterpart,
-    this.role,
-    this.members,
-    this.thisBookProgress,
-    this.pickedProgress,
-    this.readAlongOutput = false,
-  });
-
-  factory EditionLinkForBookWire.fromJson(Map<String, dynamic> j) {
-    final link = _psMap(j['link']);
-    final proposed = _psMap(j['proposed']);
-    final counterpart = _psMap(j['counterpart']);
-    return EditionLinkForBookWire(
-      link: link == null ? null : EditionLinkWire.fromJson(link),
-      proposed: proposed == null ? null : EditionLinkCandidateWire.fromJson(proposed),
-      counterpart: counterpart == null ? null : EditionLinkCounterpartWire.fromJson(counterpart),
-      role: _psEnum(EditionLinkRole.values, j['role']),
-      members: EditionLinkMembersWire.fromJson(_psMap(j['members'])),
-      thisBookProgress: _psInt(j['thisBookProgress']),
-      pickedProgress: _psInt(j['pickedProgress']),
-      readAlongOutput: j['readAlongOutput'] == true,
-    );
-  }
-}
-
 class AlignmentStatusWire {
   final AlignmentStatus status;
   final int? samplesDone;
   final int? samplesTotal;
-  final int? anchorCount;
   final String? builtAt;
   final String? error;
   final bool stale;
@@ -193,7 +44,6 @@ class AlignmentStatusWire {
     this.status = AlignmentStatus.none,
     this.samplesDone,
     this.samplesTotal,
-    this.anchorCount,
     this.builtAt,
     this.error,
     this.stale = false,
@@ -207,7 +57,6 @@ class AlignmentStatusWire {
       status: status,
       samplesDone: _psInt(j['samplesDone']),
       samplesTotal: _psInt(j['samplesTotal']),
-      anchorCount: _psInt(j['anchorCount']),
       builtAt: _psString(j['builtAt']),
       error: _psString(j['error']),
       stale: j['stale'] == true,
@@ -229,118 +78,253 @@ class AlignmentBuildWire {
   }
 }
 
-class ReadAlongOutputBookWire {
-  final int id;
+/// A book's `readAloudSync`. A server before the read-aloud sync has none,
+/// which reads as unavailable for want of a read-aloud EPUB.
+ReadAloudSync readAloudSyncFromJson(Map<String, dynamic>? j) => j == null
+    ? const ReadAloudSync(unavailableReason: ReadAloudSyncReason.noMediaOverlayEpub)
+    : ReadAloudSync(
+        mode: _psEnum(ReadAloudSyncMode.values, j['mode']) ?? ReadAloudSyncMode.auto,
+        state: _psEnum(ReadAloudSyncState.values, j['state']) ?? ReadAloudSyncState.unavailable,
+        unavailableReason: _psEnum(ReadAloudSyncReason.values, j['unavailableReason']),
+        audioDurationSeconds: _psDouble(j['audioDurationSeconds']),
+        overlayDurationSeconds: _psDouble(j['overlayDurationSeconds']),
+      );
+
+/// One kind of the book's files, as BookOrbit's `bookFormatEntries` groups
+/// them: the plain EPUB, the read-aloud EPUB, or the audio tracks together.
+class PositionSyncEditionFiles {
   final String? title;
-  const ReadAlongOutputBookWire({required this.id, this.title});
+  final String formatName;
+  final List<int> fileIds;
+  final int sizeBytes;
+  const PositionSyncEditionFiles({this.title, required this.formatName, this.fileIds = const [], this.sizeBytes = 0});
 }
 
-class ReadAlongStatusWire {
-  final ReadAlongStatus status;
-  final ReadAlongBlock? blocked;
-  final ReadAlongPhase? phase;
-  final String? remoteTask;
-
-  /// 0..1, as Storyteller reports it for the current task.
-  final double? remoteProgress;
-  final ReadAlongOutputBookWire? outputBook;
-  final int? targetLibraryId;
-  final String? targetLibraryName;
-  final int? epubBytes;
-  final int? audioBytes;
-  final int? readAlongBytes;
-  final bool keepRemoteCopyByDefault;
-  final bool remoteCopyReclaimable;
-  final String? error;
-  final String? startedAt;
-  final String? builtAt;
-
-  /// 1-based place among queued builds; only while queued.
-  final int? queuePosition;
-  const ReadAlongStatusWire({
-    this.status = ReadAlongStatus.none,
-    this.blocked,
-    this.phase,
-    this.remoteTask,
-    this.remoteProgress,
-    this.outputBook,
-    this.targetLibraryId,
-    this.targetLibraryName,
-    this.epubBytes,
-    this.audioBytes,
-    this.readAlongBytes,
-    this.keepRemoteCopyByDefault = false,
-    this.remoteCopyReclaimable = true,
-    this.error,
-    this.startedAt,
-    this.builtAt,
-    this.queuePosition,
+/// The book's own files, read from its detail.
+class PositionSyncBookInfo {
+  final String? coverVersion;
+  final String? language;
+  final PositionSyncEditionFiles? ebook;
+  final PositionSyncEditionFiles? readAlong;
+  final PositionSyncEditionFiles? audiobook;
+  final ReadAloudSync readAloudSync;
+  const PositionSyncBookInfo({
+    this.coverVersion,
+    this.language,
+    this.ebook,
+    this.readAlong,
+    this.audiobook,
+    this.readAloudSync = const ReadAloudSync(),
   });
 
-  factory ReadAlongStatusWire.fromJson(Map<String, dynamic> j) {
-    final status = _psEnum(ReadAlongStatus.values, j['status']) ?? ReadAlongStatus.none;
-    final progress = _psDouble(j['remoteProgress']);
-    final output = _psMap(j['outputBook']);
-    final bytes = _psMap(j['remoteCopyBytes']);
-    final queue = j['queuePosition'];
-    return ReadAlongStatusWire(
-      status: status,
-      blocked: _psEnum(ReadAlongBlock.values, j['blocked']),
-      phase: _psEnum(ReadAlongPhase.values, j['phase']),
-      remoteTask: _psString(j['remoteTask']),
-      remoteProgress: progress == null || progress.isNaN ? null : progress.clamp(0.0, 1.0),
-      outputBook: output == null || _psInt(output['id']) == null
-          ? null
-          : ReadAlongOutputBookWire(id: _psInt(output['id'])!, title: _psString(output['title'])),
-      targetLibraryId: _psInt(j['targetLibraryId']),
-      targetLibraryName: _psString(j['targetLibraryName']),
-      epubBytes: _psInt(bytes?['epub']),
-      audioBytes: _psInt(bytes?['audio']),
-      readAlongBytes: _psInt(bytes?['readAlong']),
-      keepRemoteCopyByDefault: j['keepRemoteCopyByDefault'] == true,
-      remoteCopyReclaimable: j['remoteCopyReclaimable'] != false,
-      error: status == ReadAlongStatus.failed ? _psString(j['error']) : null,
-      startedAt: _psString(j['startedAt']),
-      builtAt: _psString(j['builtAt']),
-      queuePosition: status == ReadAlongStatus.queued && queue is int && queue > 0 ? queue : null,
+  static const _formatNames = {
+    'djvu': 'DjVu document',
+    'epub': 'EPUB e-book',
+    'kepub': 'KEPUB e-book',
+    'pdf': 'PDF document',
+    'cbz': 'CBZ comic',
+    'cbr': 'CBR comic',
+    'cb7': 'CB7 comic',
+    'mobi': 'MOBI e-book',
+    'azw3': 'AZW3 e-book',
+    'azw': 'AZW e-book',
+    'fb2': 'FictionBook',
+    'm4b': 'M4B audiobook',
+    'mp3': 'MP3 audio',
+    'm4a': 'M4A audio',
+    'opus': 'Opus audio',
+    'ogg': 'OGG audio',
+    'flac': 'FLAC audio',
+  };
+  static const _readAlongName = 'Read-aloud EPUB';
+
+  static String _base(Map<String, dynamic> f) {
+    final name = _psString(f['filename']) ?? (_psString(f['absolutePath']) ?? '').split(RegExp(r'[\\/]')).last;
+    final dot = name.lastIndexOf('.');
+    final base = dot > 0 ? name.substring(0, dot) : name;
+    // Read-aloud EPUBs are often named "<title>.readaloud.epub".
+    return base.replaceFirst(RegExp(r'\.readaloud$', caseSensitive: false), '');
+  }
+
+  /// What several files' names share, as the web panel titles an edition;
+  /// a share too short to read falls back to the first name.
+  static String? _title(List<Map<String, dynamic>> files) {
+    final bases = [for (final f in files) _base(f)].where((b) => b.isNotEmpty).toList();
+    if (bases.isEmpty) return null;
+    if (bases.length == 1) return bases.first;
+    var stem = bases.first;
+    for (final b in bases.skip(1)) {
+      var i = 0;
+      while (i < stem.length && i < b.length && stem[i] == b[i]) {
+        i++;
+      }
+      stem = stem.substring(0, i);
+    }
+    stem = stem.replaceAll(RegExp(r'[\s\-_.(\[]+$'), '');
+    return stem.length >= 3 ? stem : bases.first;
+  }
+
+  static PositionSyncEditionFiles? _edition(List<Map<String, dynamic>> files, String formatName) => files.isEmpty
+      ? null
+      : PositionSyncEditionFiles(
+          title: _title(files),
+          formatName: formatName,
+          fileIds: [for (final f in files) if (_psInt(f['id']) != null) _psInt(f['id'])!],
+          sizeBytes: files.fold(0, (sum, f) => sum + (_psInt(f['sizeBytes']) ?? 0)),
+        );
+
+  factory PositionSyncBookInfo.fromDetail(Map<String, dynamic> detail) {
+    final plain = <Map<String, dynamic>>[];
+    final narrated = <Map<String, dynamic>>[];
+    final audio = <Map<String, dynamic>>[];
+    for (final f in _psMaps(detail['files'])) {
+      if (f['role'] != 'primary' && f['role'] != 'content') continue;
+      final format = (f['format'] as String?)?.toLowerCase();
+      if (format == null) continue;
+      if (BookOrbitMapper.isAudioFormat(format)) {
+        audio.add(f);
+      } else if (format == 'epub') {
+        (_psMap(f['mediaOverlay'])?['available'] == true ? narrated : plain).add(f);
+      }
+    }
+    final audioFormat = audio.isEmpty ? null : (audio.first['format'] as String).toLowerCase();
+    return PositionSyncBookInfo(
+      coverVersion: _psString(detail['coverVersion']),
+      language: _psString(detail['language']),
+      ebook: _edition(plain, _formatNames['epub']!),
+      readAlong: _edition(narrated, _readAlongName),
+      audiobook: audioFormat == null ? null : _edition(audio, _formatNames[audioFormat] ?? audioFormat.toUpperCase()),
+      readAloudSync: readAloudSyncFromJson(_psMap(detail['readAloudSync'])),
     );
   }
 }
 
-class ReadAlongBuildWire {
-  final ReadAlongStatus status;
-  final ReadAlongBlock? blocked;
-  const ReadAlongBuildWire({required this.status, this.blocked});
+/// How far each of the book's files is, 0..100, and the audiobook's
+/// playback position.
+class PositionSyncProgressWire {
+  final Map<int, double> files;
+  final double? audio;
+  const PositionSyncProgressWire({this.files = const {}, this.audio});
+}
 
-  factory ReadAlongBuildWire.fromJson(Map<String, dynamic> j) => ReadAlongBuildWire(
-        status: _psEnum(ReadAlongStatus.values, j['status']) ?? ReadAlongStatus.none,
-        blocked: _psEnum(ReadAlongBlock.values, j['blocked']),
+class ReadAloudCandidateFileWire {
+  final int id;
+  final String filename;
+  const ReadAloudCandidateFileWire({required this.id, required this.filename});
+}
+
+class ReadAloudJobWire {
+  final String id;
+  final int bookId;
+  final ReadAloudJobStatus status;
+  final String stage;
+  final double progress;
+  final int? queuePosition;
+  final String? errorCode;
+  final bool cancelRequested;
+  final bool cancellable;
+  final bool canManage;
+  final String? updatedAt;
+  final String? dismissedAt;
+  final String? retryableUntil;
+  const ReadAloudJobWire({
+    required this.id,
+    required this.bookId,
+    required this.status,
+    this.stage = 'queued',
+    this.progress = 0,
+    this.queuePosition,
+    this.errorCode,
+    this.cancelRequested = false,
+    this.cancellable = false,
+    this.canManage = false,
+    this.updatedAt,
+    this.dismissedAt,
+    this.retryableUntil,
+  });
+
+  /// Null for a payload without an id or a status this build knows.
+  static ReadAloudJobWire? fromJson(Map<String, dynamic>? j) {
+    final id = _psString(j?['id']);
+    final status = _psEnum(ReadAloudJobStatus.values, j?['status']);
+    if (j == null || id == null || status == null) return null;
+    return ReadAloudJobWire(
+      id: id,
+      bookId: _psInt(j['bookId']) ?? 0,
+      status: status,
+      stage: _psString(j['stage']) ?? 'queued',
+      progress: _psDouble(j['progress']) ?? 0,
+      queuePosition: _psInt(j['queuePosition']),
+      errorCode: _psString(j['errorCode']),
+      cancelRequested: j['cancelRequested'] == true,
+      cancellable: j['cancellable'] == true,
+      canManage: j['canManage'] == true,
+      updatedAt: _psString(j['updatedAt']),
+      dismissedAt: _psString(j['dismissedAt']),
+      retryableUntil: _psString(j['retryableUntil']),
+    );
+  }
+
+  bool get active =>
+      status == ReadAloudJobStatus.queued ||
+      status == ReadAloudJobStatus.processing ||
+      status == ReadAloudJobStatus.awaitingReview;
+
+  bool get running => status == ReadAloudJobStatus.queued || status == ReadAloudJobStatus.processing;
+
+  bool get completed => status == ReadAloudJobStatus.completed || status == ReadAloudJobStatus.completedWithWarnings;
+}
+
+/// `GET /books/:id/read-aloud`: whether upstream's generator can run on the
+/// book, and its latest job.
+class ReadAloudCapabilityWire {
+  final bool workerConfigured;
+  final bool eligible;
+  final ReadAloudReason? reason;
+  final List<String> supportedLanguages;
+  final List<ReadAloudCandidateFileWire> epubFiles;
+  final List<int> audioFileIds;
+  final int existingReadAlongs;
+  final ReadAloudJobWire? latestJob;
+  const ReadAloudCapabilityWire({
+    this.workerConfigured = false,
+    this.eligible = false,
+    this.reason,
+    this.supportedLanguages = const [],
+    this.epubFiles = const [],
+    this.audioFileIds = const [],
+    this.existingReadAlongs = 0,
+    this.latestJob,
+  });
+
+  factory ReadAloudCapabilityWire.fromJson(Map<String, dynamic> j) => ReadAloudCapabilityWire(
+        workerConfigured: j['workerConfigured'] == true,
+        eligible: j['eligible'] == true,
+        reason: _psEnum(ReadAloudReason.values, j['reason']),
+        supportedLanguages: [for (final l in (j['supportedLanguages'] as List? ?? const [])) if (l is String) l],
+        epubFiles: [
+          for (final f in _psMaps(j['epubFiles']))
+            if (_psInt(f['id']) != null) ReadAloudCandidateFileWire(id: _psInt(f['id'])!, filename: _psString(f['filename']) ?? ''),
+        ],
+        audioFileIds: [for (final f in _psMaps(j['audioFiles'])) if (_psInt(f['id']) != null) _psInt(f['id'])!],
+        existingReadAlongs: (j['existingReadAlongs'] as List?)?.length ?? 0,
+        latestJob: ReadAloudJobWire.fromJson(_psMap(j['latestJob'])),
       );
 }
 
-enum ReadAlongCancelOutcome { cancelled, tooLate, failed }
+/// What a new read-aloud job is made from, as upstream's dialog sends it.
+class ReadAloudRequest {
+  final int epubFileId;
+  final List<int> audioFileIds;
+  final String language;
 
-class StorytellerExistingMatchWire {
-  final String uuid;
-  final String title;
-  final List<String> authors;
-  final bool aligned;
-  final int score;
-  const StorytellerExistingMatchWire({
-    required this.uuid,
-    required this.title,
-    this.authors = const [],
-    this.aligned = false,
-    this.score = 0,
-  });
+  /// 'sentence' or 'word'.
+  final String granularity;
+  const ReadAloudRequest(
+      {required this.epubFileId, required this.audioFileIds, required this.language, this.granularity = 'sentence'});
 
-  factory StorytellerExistingMatchWire.fromJson(Map<String, dynamic> j) => StorytellerExistingMatchWire(
-        uuid: _psString(j['uuid']) ?? '',
-        title: _psString(j['title']) ?? '',
-        authors: [for (final a in (j['authors'] as List<dynamic>? ?? const [])) if (a is String) a],
-        aligned: j['aligned'] == true,
-        score: _psInt(j['score']) ?? 0,
-      );
+  Map<String, dynamic> toJson() =>
+      {'epubFileId': epubFileId, 'audioFileIds': audioFileIds, 'language': language, 'granularity': granularity};
 }
 
 class AbsSyncLinkWire {
@@ -423,75 +407,11 @@ class AbsBookStateWire {
       );
 }
 
-class ReadAlongLibraryWire {
-  final int id;
-  final String name;
-  const ReadAlongLibraryWire({required this.id, required this.name});
-}
-
-enum PositionSyncModality { text, audio, both, none }
-
-/// The read-along's fit with its audiobook when a rebuild would fix it.
-class ReadAloudIssue {
-  /// 'narration_mismatch' or 'audio_changed'.
-  final String reason;
-  final int? narrationFile;
-  final double? narrationSeconds;
-  final int? chapter;
-  final double? chapterSeconds;
-  const ReadAloudIssue({required this.reason, this.narrationFile, this.narrationSeconds, this.chapter, this.chapterSeconds});
-
-  static ReadAloudIssue? fromJson(Map<String, dynamic>? j) {
-    if (j == null || j['state'] != 'unavailable') return null;
-    final reason = j['unavailableReason'];
-    if (reason != 'narration_mismatch' && reason != 'audio_changed') return null;
-    final mismatch = reason == 'narration_mismatch' ? _psMap(j['narrationMismatch']) : null;
-    return ReadAloudIssue(
-      reason: reason as String,
-      narrationFile: _psInt(mismatch?['narrationFile']),
-      narrationSeconds: _psDouble(mismatch?['narrationSeconds']),
-      chapter: _psInt(mismatch?['chapter']),
-      chapterSeconds: _psDouble(mismatch?['chapterSeconds']),
-    );
-  }
-}
-
-class PositionSyncBookInfo {
-  final PositionSyncModality modality;
-  final ReadAloudIssue? readAloudIssue;
-  const PositionSyncBookInfo({required this.modality, this.readAloudIssue});
-
-  /// From a BookOrbit book detail: the content files decide whether it is an
-  /// ebook, an audiobook, both or neither.
-  factory PositionSyncBookInfo.fromDetail(Map<String, dynamic> detail) {
-    var text = false;
-    var audio = false;
-    for (final f in (detail['files'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>()) {
-      if (f['role'] != 'primary' && f['role'] != 'content') continue;
-      final format = (f['format'] as String?)?.toLowerCase();
-      if (format == null) continue;
-      if (format == 'epub' || format == 'kepub') text = true;
-      if (BookOrbitMapper.isAudioFormat(format)) audio = true;
-    }
-    return PositionSyncBookInfo(
-      modality: text && audio
-          ? PositionSyncModality.both
-          : text
-              ? PositionSyncModality.text
-              : audio
-                  ? PositionSyncModality.audio
-                  : PositionSyncModality.none,
-      readAloudIssue: ReadAloudIssue.fromJson(_psMap(detail['readAloudSync'])),
-    );
-  }
-}
-
 class PositionSyncPermissions {
-  final bool editLink;
+  final bool align;
   final bool generate;
-  final bool rebuild;
   final bool abs;
-  const PositionSyncPermissions({this.editLink = false, this.generate = false, this.rebuild = false, this.abs = false});
+  const PositionSyncPermissions({this.align = false, this.generate = false, this.abs = false});
 }
 
 extension ForkPositionSyncApi on BookOrbitApiService {
@@ -508,60 +428,42 @@ extension ForkPositionSyncApi on BookOrbitApiService {
   static String _absPath(String absLibraryItemId) =>
       '/audiobookshelf/books/${Uri.encodeComponent(absLibraryItemId)}';
 
-  Future<PositionSyncBookInfo> positionSyncBookInfo(int bookId) =>
-      _ps(() async => PositionSyncBookInfo.fromDetail(await _detail('$bookId')));
+  /// [fresh] reads the detail past its cache, for after a job added a file.
+  Future<PositionSyncBookInfo> positionSyncBookInfo(int bookId, {bool fresh = false}) =>
+      _ps(() async => PositionSyncBookInfo.fromDetail(await _detail('$bookId', fresh: fresh)));
 
   Future<PositionSyncPermissions> positionSyncPermissions() async => PositionSyncPermissions(
         // One /auth/me per ten minutes, not one per sheet (bookorbit_perf.dart).
-        editLink: await _forkLoadPermissions().then((_) => _can('library_edit_metadata')),
-        generate: await _can('library_upload'),
-        rebuild: await _can('library_delete_books'),
+        align: await _forkLoadPermissions().then((_) => _can('library_edit_metadata')),
+        generate: await _can('library_generate_read_aloud'),
         abs: await _can('audiobookshelf_sync'),
       );
 
-  /// The bytes of [bookId]'s content files, from its detail (cached, so the
-  /// open book's own costs nothing).
-  Future<int> editionSizeBytes(int bookId) => _ps(() async {
-        var total = 0;
-        for (final f in ((await _detail('$bookId'))['files'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>()) {
-          if (f['role'] != 'primary' && f['role'] != 'content') continue;
-          total += _psInt(f['sizeBytes']) ?? 0;
+  /// Each file's progress and, for a book with audio, the playback position.
+  Future<PositionSyncProgressWire> positionSyncProgress(int bookId) => _ps(() async {
+        final detail = await _detail('$bookId');
+        final rows = await _boGet('/books/$bookId/progress') as List<dynamic>? ?? const [];
+        final files = <int, double>{};
+        for (final r in rows.whereType<Map<String, dynamic>>()) {
+          final id = _psInt(r['fileId']);
+          final pct = _psDouble(r['percentage']);
+          if (id != null && pct != null) files[id] = pct;
         }
-        return total;
+        double? audio;
+        if (BookOrbitApiService._detailHasAudio(detail)) {
+          final p = await _itemProgress('$bookId', detail: detail);
+          final fraction = (p?['progress'] as num?)?.toDouble();
+          if (fraction != null) audio = p?['isFinished'] == true ? 100 : fraction * 100;
+        }
+        return PositionSyncProgressWire(files: files, audio: audio);
       });
 
   String positionSyncAbsCoverUrl(String absLibraryItemId) =>
       BookOrbitMediaProxy.instance.urlFor('/api/v1${_absPath(absLibraryItemId)}/cover');
 
-  // Edition links.
-
-  Future<EditionLinkForBookWire> editionLinkForBook(int bookId, {int? counterpartId}) => _ps(() async =>
-      EditionLinkForBookWire.fromJson(
-          await _boGet('/edition-links/for-book/$bookId', {'counterpartId': counterpartId}) as Map<String, dynamic>));
-
-  Future<List<EditionLinkCandidateWire>> editionLinkCandidates(int sourceBookId, {String? q}) => _ps(() async {
-        var query = q?.trim() ?? '';
-        if (query.length > 200) query = query.substring(0, 200);
-        final list = await _boGet('/edition-links/candidates/$sourceBookId', {'q': query.isEmpty ? null : query});
-        return [
-          for (final c in (list as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>())
-            EditionLinkCandidateWire.fromJson(c),
-        ];
-      });
-
-  Future<EditionLinkWire> linkEditions(int sourceBookId, int counterpartId) => _ps(() async => EditionLinkWire.fromJson(
-      await _boPost('/edition-links/link/$sourceBookId', {'counterpartId': counterpartId}) as Map<String, dynamic>));
-
-  /// What leaves depends on [bookId]'s role in its link: a read-along is
-  /// detached, an ebook leaves, an audiobook dissolves the whole link.
-  Future<EditionLinkWire?> unlinkEdition(int bookId) => _ps(() async {
-        final r = _psMap(await _boDelete('/edition-links/link/$bookId'));
-        return r == null ? null : EditionLinkWire.fromJson(r);
-      });
-
-  Future<EditionLinkWire> attachReadAlong(int pairBookId, int readAlongBookId) => _ps(() async =>
-      EditionLinkWire.fromJson(await _boPost('/edition-links/read-along/$pairBookId', {'readAlongBookId': readAlongBookId})
-          as Map<String, dynamic>));
+  /// The book's page in BookOrbit's web app with its read-aloud job open,
+  /// where a job is reviewed.
+  String readAloudReviewUrl(int bookId) => '$_cleanBaseUrl/book/$bookId?tab=files&readAloud=details';
 
   // Reading alignment.
 
@@ -577,66 +479,45 @@ extension ForkPositionSyncApi on BookOrbitApiService {
         await _boDelete('/reading-alignment/books/$bookId/build');
       });
 
-  // Storyteller read-along.
+  // Upstream's read-aloud sync and generator.
 
-  Future<ReadAlongStatusWire> readAlongStatus(int bookId, {int? counterpartId}) => _ps(() async =>
-      ReadAlongStatusWire.fromJson(await _boGet('/storyteller/read-along/books/$bookId/status',
-          {'counterpartId': counterpartId}) as Map<String, dynamic>));
-
-  Future<ReadAlongBuildWire> buildReadAlong(int bookId,
-          {bool force = false, int? counterpartId, int? targetLibraryId, String? useExistingUuid, bool? cleanUpRemote}) =>
-      _ps(() async => ReadAlongBuildWire.fromJson(_psMap(await _boPost('/storyteller/read-along/books/$bookId/build', {
-            if (force) 'force': true,
-            if (counterpartId != null) 'counterpartId': counterpartId,
-            if (targetLibraryId != null) 'targetLibraryId': targetLibraryId,
-            if (useExistingUuid != null) 'useExistingUuid': useExistingUuid,
-            if (cleanUpRemote != null) 'cleanUpRemote': cleanUpRemote,
-          })) ??
-          const {}));
-
-  /// Never throws: a refusal because the import already runs is
-  /// [ReadAlongCancelOutcome.tooLate], anything else that fails is
-  /// [ReadAlongCancelOutcome.failed].
-  Future<ReadAlongCancelOutcome> cancelReadAlong(int bookId, {int? counterpartId}) async {
-    try {
-      final q = counterpartId == null ? '' : '?counterpartId=$counterpartId';
-      await _boDelete('/storyteller/read-along/books/$bookId/build$q');
-      return ReadAlongCancelOutcome.cancelled;
-    } on _BoHttpError catch (e) {
-      return e.status == 409 ? ReadAlongCancelOutcome.tooLate : ReadAlongCancelOutcome.failed;
-    } catch (e) {
-      debugPrint('[BookOrbit] read-along cancel for $bookId: $e');
-      return ReadAlongCancelOutcome.failed;
-    }
-  }
-
-  /// Aligned Storyteller books that already cover this pair; empty on any
-  /// failure, since they only enrich the Import offer.
-  Future<List<StorytellerExistingMatchWire>> readAlongExisting(int bookId, {int? counterpartId}) async {
-    try {
-      final r = _psMap(await _boGet('/storyteller/read-along/books/$bookId/existing', {'counterpartId': counterpartId}));
-      return [
-        for (final m in (r?['matches'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>())
-          StorytellerExistingMatchWire.fromJson(m),
-      ];
-    } catch (e) {
-      debugPrint('[BookOrbit] read-along existing for $bookId: $e');
-      return const [];
-    }
-  }
-
-  /// Book libraries whose allow-list takes an EPUB, the only ones the build
-  /// endpoint accepts as a destination. The list only carries
-  /// `allowedFormats` for a superuser; a missing one means every format.
-  Future<List<ReadAlongLibraryWire>> readAlongTargetLibraries() => _ps(() async {
-        final raw = await _boGet('/libraries') as List<dynamic>? ?? const [];
-        bool takesEpub(Object? formats) => formats is! List || formats.isEmpty || formats.contains('epub');
-        return [
-          for (final l in raw.whereType<Map<String, dynamic>>())
-            if (l['type'] == 'books' && takesEpub(l['allowedFormats']) && _psInt(l['id']) != null)
-              ReadAlongLibraryWire(id: _psInt(l['id'])!, name: _psString(l['name']) ?? ''),
-        ];
+  /// Turns the book's read-aloud sync on ('auto') or off; the server answers
+  /// with the book, which replaces the cached detail.
+  Future<ReadAloudSync> setReadAloudSyncMode(int bookId, ReadAloudSyncMode mode) => _ps(() async {
+        final d = _psMap(await _boPatch('/books/$bookId/read-aloud-sync', {'mode': mode.name}));
+        if (d == null) throw const PositionSyncRequestFailure(0, 'empty answer');
+        final k = _key('$bookId');
+        BookOrbitApiService._details[k] = d;
+        BookOrbitApiService._detailAt[k] = DateTime.now();
+        return readAloudSyncFromJson(_psMap(d['readAloudSync']));
       });
+
+  Future<ReadAloudCapabilityWire> readAloudCapability(int bookId) => _ps(() async =>
+      ReadAloudCapabilityWire.fromJson(await _boGet('/books/$bookId/read-aloud') as Map<String, dynamic>));
+
+  Future<ReadAloudJobWire?> readAloudJob(String jobId) =>
+      _ps(() async => ReadAloudJobWire.fromJson(_psMap(await _boGet('/read-aloud-jobs/${Uri.encodeComponent(jobId)}'))));
+
+  Future<ReadAloudJobWire?> createReadAloudJob(int bookId, ReadAloudRequest request) => _ps(() async =>
+      ReadAloudJobWire.fromJson(_psMap(await _boPost('/books/$bookId/read-aloud-jobs', request.toJson()))));
+
+  Future<ReadAloudJobWire?> cancelReadAloudJob(String jobId) =>
+      _ps(() async => ReadAloudJobWire.fromJson(_psMap(await _boDelete('/read-aloud-jobs/${Uri.encodeComponent(jobId)}'))));
+
+  Future<ReadAloudJobWire?> retryReadAloudJob(String jobId) => _ps(() async =>
+      ReadAloudJobWire.fromJson(_psMap(await _boPost('/read-aloud-jobs/${Uri.encodeComponent(jobId)}/retry'))));
+
+  /// The reader's saved narration language, or null; never throws, since it
+  /// only fills a default.
+  Future<String?> readAloudDefaultLanguage() async {
+    try {
+      final r = _psMap(await _boGet('/user-preferences/read-aloud'));
+      return _psString(_psMap(r?['settings'])?['defaultLanguage']);
+    } catch (e) {
+      debugPrint('[BookOrbit] read-aloud preferences: $e');
+      return null;
+    }
+  }
 
   // Audiobookshelf.
 
@@ -681,9 +562,6 @@ extension ForkPositionSyncApi on BookOrbitApiService {
           'pageSize': pageSize,
           'q': query.isEmpty ? null : query,
         }));
-        return [
-          for (final i in (r?['items'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>())
-            AbsBookStateWire.fromJson(i),
-        ];
+        return [for (final i in _psMaps(r?['items'])) AbsBookStateWire.fromJson(i)];
       });
 }

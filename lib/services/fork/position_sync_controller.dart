@@ -8,10 +8,11 @@ import 'position_sync_chain.dart';
 
 // Fork-owned: loads, polls and acts on one BookOrbit book's position sync,
 // a port of BookOrbit's useSyncChainPanel and the composables it uses
-// (useEditionLink, useReadingAlignment, useReadAlong, the Audiobookshelf
-// sync link). The sync button and the sheet share one controller per book.
-// It has no widgets: what an action ends with goes to [onNotice], which the
-// open sheet turns into a toast. See FORK_NOTES.md.
+// (useReadingAlignment, useSyncChainReadAloud with upstream's useReadAloud,
+// the Audiobookshelf sync link). The sync button, the Editions card and the
+// sheet share one controller per book. It has no widgets: what an action
+// ends with goes to [onNotice], which the open sheet turns into a toast.
+// See FORK_NOTES.md.
 
 enum PositionSyncNoticeKind { success, error, info }
 
@@ -21,11 +22,6 @@ class PositionSyncNotice {
   const PositionSyncNotice(this.kind, this.message);
 }
 
-/// What a read-along build request ended with. Only [started] leaves a job
-/// running; the sheet goes back to the chain for all but [failed], which
-/// keeps the options open for a retry.
-enum ReadAlongBuildOutcome { started, ready, blocked, failed }
-
 class _Entry {
   final PositionSyncController controller;
   int refs = 0;
@@ -34,30 +30,86 @@ class _Entry {
 }
 
 const _alignmentPoll = Duration(seconds: 3);
-// Storyteller runs for minutes to hours, so its status is read far less often.
-const _readAlongPoll = Duration(seconds: 5);
+// A read-aloud runs for minutes to hours, so its job is read far less often;
+// one waiting for review only changes when someone reviews it.
+const _jobPoll = Duration(seconds: 5);
+const _reviewPoll = Duration(seconds: 30);
 // A build starts asynchronously, so the next reads can still show the row
 // from before it. This many are held as the optimistic status.
 const _maxAwaitBuildRowPolls = 5;
-// A build runs for hours; one failed read from a restarting proxy must not
-// end the build view.
-const _maxReadAlongFailures = 5;
 const _searchDebounce = Duration(milliseconds: 250);
 
 bool _alignmentRunning(AlignmentStatus s) => s == AlignmentStatus.pending || s == AlignmentStatus.building;
 
-bool _readAlongInFlight(ReadAlongStatus s) => s == ReadAlongStatus.queued || s == ReadAlongStatus.building;
+const _slotStatuses = {
+  ReadAloudJobStatus.queued,
+  ReadAloudJobStatus.processing,
+  ReadAloudJobStatus.awaitingReview,
+  ReadAloudJobStatus.failed,
+};
+
+/// Reasons only an admin or a library change can clear: the slot stays out
+/// of the chain rather than saying so on every visit.
+const _hiddenReasons = {ReadAloudReason.workerNotConfigured, ReadAloudReason.singleFileLibrary, ReadAloudReason.noAudiobook};
+
+/// Upstream's resolveReadAloudEntry.
+ReadAloudEntry resolveReadAloudEntry({required bool enabled, ReadAloudCapabilityWire? capability, ReadAloudJobWire? job}) {
+  if (!enabled || capability == null || !capability.workerConfigured) return const ReadAloudEntryHidden();
+  final reason = capability.reason;
+  if (reason != null && _hiddenReasons.contains(reason)) return const ReadAloudEntryHidden();
+  if (job != null && job.active) {
+    return ReadAloudEntryUnavailable(ReadAloudReason.jobActive, PositionSyncCopy.reasons[ReadAloudReason.jobActive]!);
+  }
+  if (reason == ReadAloudReason.noEpub && capability.existingReadAlongs > 0) {
+    return const ReadAloudEntryUnavailable(ReadAloudReason.noEpub, PositionSyncCopy.reasonNoEpubExisting);
+  }
+  if (reason != null) return ReadAloudEntryUnavailable(reason, PositionSyncCopy.reasons[reason] ?? PositionSyncCopy.reasonUnknown);
+  if (!capability.eligible) return const ReadAloudEntryUnavailable(null, PositionSyncCopy.reasonUnknown);
+  return const ReadAloudEntryAvailable();
+}
+
+/// The job as the slot follows it, or null for one it does not show.
+SyncChainReadAloudJob? slotJobFrom(ReadAloudJobWire? job, {DateTime? now}) {
+  if (job == null || job.dismissedAt != null || !_slotStatuses.contains(job.status)) return null;
+  final until = job.retryableUntil == null ? null : DateTime.tryParse(job.retryableUntil!);
+  return SyncChainReadAloudJob(
+    status: job.status,
+    stage: job.stage,
+    progress: job.progress,
+    queuePosition: job.queuePosition,
+    stopping: job.cancelRequested,
+    canCancel: job.canManage && job.cancellable && job.stage != 'publishing',
+    // As upstream's job card: Retry resumes from kept work files, which expire.
+    canRetry: job.canManage && job.errorCode != 'review_expired' && until != null && until.isAfter(now ?? DateTime.now()),
+    error: job.status == ReadAloudJobStatus.failed ? readAloudJobError(job.errorCode) : null,
+  );
+}
+
+String _createError(Object e) => switch (e is PositionSyncRequestFailure ? e.status : null) {
+      400 => PositionSyncCopy.errorCreateInvalid,
+      403 => PositionSyncCopy.errorForbidden,
+      409 => PositionSyncCopy.errorCreateConflict,
+      503 => PositionSyncCopy.errorCreateUnavailable,
+      _ => PositionSyncCopy.errorCreate,
+    };
+
+String _mutationError(Object e, String fallback) => switch (e is PositionSyncRequestFailure ? e.status : null) {
+      403 => PositionSyncCopy.errorForbidden,
+      404 => PositionSyncCopy.errorGone,
+      409 => PositionSyncCopy.errorConflict,
+      _ => fallback,
+    };
 
 class PositionSyncController extends ChangeNotifier {
   PositionSyncController._(this.api, this.bookId);
 
   static final Map<int, _Entry> _registry = {};
 
+  static bool _listensForClears = false;
+
   /// The shared controller for [bookId]; every acquire needs a [release].
   /// [api] replaces the one held, since the auth provider hands out a fresh
   /// service on every read.
-  static bool _listensForClears = false;
-
   static PositionSyncController acquire(BookOrbitApiService api, int bookId) {
     if (!_listensForClears) {
       _listensForClears = true;
@@ -69,23 +121,27 @@ class PositionSyncController extends ChangeNotifier {
     entry.refs++;
     entry.disposeTimer?.cancel();
     entry.disposeTimer = null;
-    // A sheet reopened within the grace period shows the state it had, reads
-    // the link again behind it and picks its build polling back up.
+    // A sheet reopened within the grace period shows the state it had and
+    // picks its polling back up.
     if (entry.refs == 1 && c._parked) {
       c._parked = false;
       if (c.loaded) {
-        unawaited(c.load());
-        if (c.link != null) unawaited(c._fetchBuildStatuses());
+        _resume(c);
       }
     }
     return c;
+  }
+
+  static void _resume(PositionSyncController c) {
+    if (_alignmentRunning(c.alignment.status)) unawaited(c._alFetch());
+    if (c._job?.active == true) unawaited(c._refreshJob());
   }
 
   /// How long a released controller is kept for the next open of its book.
   /// Settable so tests can run it in milliseconds.
   static Duration releaseGrace = const Duration(seconds: 90);
 
-  /// Parks the controller while no sheet shows it: its polling stops, and it
+  /// Parks the controller while nothing shows it: its polling stops, and it
   /// is disposed after [releaseGrace] unless acquired again.
   static void release(PositionSyncController c) {
     final entry = _registry[c.bookId];
@@ -95,8 +151,8 @@ class PositionSyncController extends ChangeNotifier {
     c._parked = true;
     c._alTimer?.cancel();
     c._alTimer = null;
-    c._raTimer?.cancel();
-    c._raTimer = null;
+    c._jobTimer?.cancel();
+    c._jobTimer = null;
     c._searchTimer?.cancel();
     c._searchTimer = null;
     entry.disposeTimer?.cancel();
@@ -126,12 +182,12 @@ class PositionSyncController extends ChangeNotifier {
   bool get parkedForTest => _parked;
 
   @visibleForTesting
-  bool get pollingForTest => _alTimer != null || _raTimer != null;
+  bool get pollingForTest => _alTimer != null || _jobTimer != null;
 
   @visibleForTesting
   bool get disposedForTest => _disposed;
 
-  /// Set while no sheet holds the controller: no polling is scheduled.
+  /// Set while nothing holds the controller: no polling is scheduled.
   bool _parked = false;
 
   BookOrbitApiService api;
@@ -142,31 +198,18 @@ class PositionSyncController extends ChangeNotifier {
 
   bool _disposed = false;
   bool _initialStarted = false;
-  bool _opened = false;
-  String? _title;
-  String? _author;
 
   bool loaded = false;
-  bool loading = false;
   String? loadError;
   PositionSyncBookInfo? info;
+  PositionSyncProgressWire progress = const PositionSyncProgressWire();
   PositionSyncPermissions perms = const PositionSyncPermissions();
-  EditionLinkForBookWire? forBook;
-  EditionLinkCandidateWire? picked;
-  bool proposalDismissed = false;
-  int _loadReq = 0;
-  int? _requestedCounterpartId;
-  bool _linkMutating = false;
-  bool cancelling = false;
 
   // Alignment.
   AlignmentStatusWire alignment = const AlignmentStatusWire();
   AlignmentBlock? alignmentBlocked;
   bool alignmentMutating = false;
-
-  /// From a link request until its first build is under way, so the
-  /// connector reads Linking for the whole window.
-  bool pendingStart = false;
+  bool cancelling = false;
   Timer? _alTimer;
   int _alReq = 0;
   bool _alAwaiting = false;
@@ -175,32 +218,21 @@ class PositionSyncController extends ChangeNotifier {
   String? _alBaseBuiltAt;
   Future<bool>? _pendingAlBuild;
 
-  // Read-along.
-  ReadAlongStatusWire readAlong = const ReadAlongStatusWire();
+  // Upstream's read-aloud sync.
+  bool readAloudSaving = false;
 
-  /// A read of [readAlong] has come back (or failed) since the pair was
-  /// last reset, so a `none` there means none.
-  bool readAlongChecked = false;
-  bool readAlongMutating = false;
-  List<StorytellerExistingMatchWire> existing = const [];
-  List<ReadAlongLibraryWire> targetLibraries = const [];
-  int? chosenTargetLibraryId;
-  bool keepRemoteCopy = false;
-  bool keepRemoteCopyTouched = false;
-  bool _keepRemoteCopyDefault = false;
-  ({int bookId, int counterpartId})? _raCounterpart;
-  int? _raLastBookId;
-  int? _reloadedForOutputId;
-  bool _reloadingMember = false;
-  Timer? _raTimer;
-  int _raReq = 0;
-  int _existingReq = 0;
-  bool _raAwaiting = false;
-  int _raAwaitPolls = 0;
-  int _raFailures = 0;
-  ReadAlongStatus _raBaseStatus = ReadAlongStatus.none;
-  String? _raBaseBuiltAt;
-  Future<ReadAlongBuildOutcome>? _pendingRaBuild;
+  // Upstream's read-aloud generator.
+  ReadAloudCapabilityWire? capability;
+  ReadAloudJobWire? _job;
+  ReadAloudPending? jobAction;
+  String? _slotError;
+  Timer? _jobTimer;
+  int _capReq = 0;
+  final Set<String> _completedJobIds = {};
+
+  /// The job whose status route answered 403 or 404; polling it again
+  /// cannot succeed.
+  String? _pollStoppedFor;
 
   // Audiobookshelf.
   bool absConfigured = false;
@@ -211,11 +243,9 @@ class PositionSyncController extends ChangeNotifier {
   /// The reconcile direction or action in flight.
   String? absBusy;
   String? absActionError;
-  int? _absLoadedFor;
   int _absReq = 0;
 
-  // Change search.
-  List<EditionLinkCandidateWire> candidates = const [];
+  // Audiobookshelf match search.
   List<AbsBookStateWire> absCandidates = const [];
   bool searching = false;
   bool hasSearched = false;
@@ -229,7 +259,7 @@ class PositionSyncController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _alTimer?.cancel();
-    _raTimer?.cancel();
+    _jobTimer?.cancel();
     _searchTimer?.cancel();
     onNotice = null;
     super.dispose();
@@ -240,249 +270,84 @@ class PositionSyncController extends ChangeNotifier {
   void _changed() {
     if (_disposed) return;
     _chain = null;
-    _healMissingMember();
-    if (_opened && absAudioBookId != _absLoadedFor) unawaited(_absLoad(absAudioBookId));
     notifyListeners();
-  }
-
-  /// This book's title and author, which the for-book answer does not carry.
-  /// Called while building, so it does not notify; the next change shows it.
-  void describeThisBook(String? title, String? author) {
-    if (title == _title && author == _author) return;
-    _title = title;
-    _author = author;
-    _chain = null;
   }
 
   // ─── Derived ──────────────────────────────────────────────
 
-  EditionLinkWire? get link => forBook?.link;
-  EditionLinkMembersWire? get members => forBook?.members;
-  EditionLinkRole? get role => forBook?.role;
-  bool get _isReadAlongPage => role == EditionLinkRole.readAlong;
+  bool get _hasAudio => info?.audiobook != null;
 
-  bool get busy => _linkMutating || alignmentMutating || readAlongMutating || absBusy != null;
+  /// Whisper aligns the plain EPUB with the audio only while the book has no
+  /// read-aloud, which upstream's own sync takes over.
+  bool get _usesWhisper => info?.ebook != null && info?.audiobook != null && info?.readAlong == null;
 
-  /// A read-along whose pair this reader cannot relink gets no button, nor a
-  /// book with both or no editions. Until both answers are in the button
-  /// shows its loading look rather than jumping away.
+  bool get busy =>
+      alignmentMutating || readAloudSaving || jobAction != null || absBusy != null;
+
+  /// Two of the book's own files to sync, or Audiobookshelf for its audio.
+  /// Until the first answers are in the button shows its loading look rather
+  /// than jumping away.
   bool get eligible {
     final i = info;
     if (i == null || !loaded) return true;
-    if (forBook?.readAlongOutput == true) return false;
-    return i.modality == PositionSyncModality.text || i.modality == PositionSyncModality.audio || _isReadAlongPage;
+    final sides = [i.ebook, i.audiobook, i.readAlong].nonNulls.length;
+    return sides >= 2 || (_hasAudio && perms.abs && absConfigured);
   }
 
-  SyncEdition get thisBook {
-    switch (role) {
-      case EditionLinkRole.readAlong:
-        return SyncEdition.readAlong;
-      case EditionLinkRole.text:
-        return SyncEdition.ebook;
-      case EditionLinkRole.audio:
-        return SyncEdition.audiobook;
-      case null:
-        return info?.modality == PositionSyncModality.audio ? SyncEdition.audiobook : SyncEdition.ebook;
-    }
-  }
+  ReadAloudJobWire? get job => _job;
 
-  /// The server keys alignment and read-along builds to the pair, so a
-  /// read-along page acts through the pair's ebook.
-  int get pairBookId {
-    final m = members;
-    return _isReadAlongPage && m != null ? (m.text?.id ?? m.audio.id) : bookId;
-  }
+  bool get creating => _job?.running == true;
 
-  /// A read-along detached from its pair stays matched to the pair it was
-  /// built from, so its page offers to link that pair again.
-  bool get _detachedReadAlong => _isReadAlongPage && link == null && members != null;
-
-  EditionLinkCandidateWire? get selected => picked ?? (proposalDismissed ? null : forBook?.proposed);
-
-  EditionMatch? get _matchChip {
-    if (picked != null) return const EditionMatch(MatchSource.manual);
-    final s = selected;
-    if (s == null) return null;
-    return s.fromBuild ? const EditionMatch(MatchSource.build) : EditionMatch(MatchSource.auto, s.score);
-  }
-
-  /// [progressKnown] is false for a member built from a summary that carries
-  /// no progress, so its missing progress stays unknown.
-  SyncChainSide _memberSide(EditionLinkMemberWire member, bool linked, {bool progressKnown = true}) => SyncChainSide(
-        book: SyncChainBook(
-          id: member.id,
-          title: member.title,
-          authorName: member.authorName,
-          coverVersion: member.coverVersion,
-          // A linked member with no progress record has not been started.
-          progress: linked && progressKnown ? (member.progressPercentage ?? 0) : member.progressPercentage,
-        ),
-        isMember: linked,
-        isThisBook: member.id == bookId,
-        match: linked ? null : const EditionMatch(MatchSource.pair),
+  SyncChainReadAloudSlot get _slot => SyncChainReadAloudSlot(
+        entry: resolveReadAloudEntry(enabled: perms.generate && _usesWhisper, capability: capability, job: _job),
+        job: slotJobFrom(_job),
+        pending: jobAction,
+        error: _slotError,
       );
 
-  SyncChainBook get _currentBook =>
-      SyncChainBook(id: bookId, title: _title, authorName: _author, progress: forBook?.thisBookProgress);
-
-  // The answer's own member knows the position first-hand; a pick is
-  // described by the server's pickedProgress.
-  int? _candidateProgress(EditionLinkCandidateWire c) {
-    final m = members;
-    final member = m == null ? null : [m.text, m.audio].firstWhere((e) => e?.id == c.bookId, orElse: () => null);
-    if (member != null) return member.progressPercentage;
-    if (c.progress != null) return c.progress;
-    return picked?.bookId == c.bookId ? forBook?.pickedProgress : null;
-  }
-
-  /// [serverOnly] takes the server's proposal over a pick or dismissal made
-  /// in the sheet.
-  SyncChainSide _candidateSide([bool serverOnly = false]) {
-    final c = serverOnly ? forBook?.proposed : selected;
-    if (c == null) return SyncChainSide.empty;
-    return SyncChainSide(
-      book: SyncChainBook(
-        id: c.bookId,
-        title: c.title,
-        authorName: c.authorName,
-        coverVersion: c.coverVersion,
-        progress: _candidateProgress(c),
-      ),
-      match: serverOnly
-          ? (c.fromBuild ? const EditionMatch(MatchSource.build) : EditionMatch(MatchSource.auto, c.score))
-          : _matchChip,
-    );
-  }
-
-  SyncChainSide _counterpartSide([bool serverOnly = false]) {
-    final summary = link != null ? forBook?.counterpart : null;
-    if (summary != null) {
-      return _memberSide(
-          EditionLinkMemberWire(
-              id: summary.id, title: summary.title, authorName: summary.authorName, coverVersion: summary.coverVersion),
-          true,
-          progressKnown: false);
+  int? _filesProgress(PositionSyncEditionFiles? e) {
+    if (e == null) return null;
+    double? best;
+    for (final id in e.fileIds) {
+      final p = progress.files[id];
+      if (p != null && (best == null || p > best)) best = p;
     }
-    return _candidateSide(serverOnly);
+    return best == null ? null : displayPercentage(best, best >= 100);
   }
 
-  /// Ebook first, audiobook second, whichever page the sheet is opened from.
-  ({SyncChainSide ebook, SyncChainSide audiobook}) get sides => _sidesFor();
-
-  ({SyncChainSide ebook, SyncChainSide audiobook}) _sidesFor([bool serverOnly = false]) {
-    final m = members;
-    if (m != null && (link != null || _detachedReadAlong)) {
-      final linked = link != null;
-      // A link with no ebook yet still proposes one.
-      return (
-        ebook: m.text != null ? _memberSide(m.text!, linked) : _candidateSide(serverOnly),
-        audiobook: _memberSide(m.audio, linked)
-      );
-    }
-    final current = SyncChainSide(book: _currentBook, isMember: link != null, isThisBook: true);
-    final counterpart = _counterpartSide(serverOnly);
-    return thisBook == SyncEdition.audiobook
-        ? (ebook: counterpart, audiobook: current)
-        : (ebook: current, audiobook: counterpart);
-  }
-
-  SyncChainSide side(SyncEdition e) => e == SyncEdition.audiobook ? sides.audiobook : sides.ebook;
-
-  int? get absAudioBookId => sides.audiobook.book?.id;
-
-  /// Also set on an unlinked ebook page whose candidate audiobook already
-  /// carries the read-along, while that audiobook is the one on screen.
-  EditionLinkMemberWire? get readAlongMember {
-    final m = members;
-    if (m == null) return null;
-    if (link != null) return m.readAlong;
-    return m.audio.id == sides.audiobook.book?.id ? m.readAlong : null;
-  }
-
-  int? get _missingReadAlongMemberId {
-    final output = readAlong.outputBook;
-    if (link == null || readAlong.status != ReadAlongStatus.ready || output == null || members?.readAlong != null) {
-      return null;
-    }
-    return output.id;
-  }
-
-  // The server re-attaches a read-along to a relinked pair, so its member is
-  // normally there; this is a safety net for a ready output that still lacks
-  // one. Reloaded once per output book, so a deliberate detach cannot loop.
-  void _healMissingMember() {
-    final outputId = _missingReadAlongMemberId;
-    if (outputId == null || outputId == _reloadedForOutputId) return;
-    _reloadedForOutputId = outputId;
-    _reloadingMember = true;
-    unawaited(load().whenComplete(() {
-      _reloadingMember = false;
-      _changed();
-    }));
-  }
-
-  bool get _alignmentRunningNow => _alignmentRunning(alignment.status) || alignmentMutating;
-
-  SyncChainAlignment get _alignmentSnapshot {
-    // Before a pair exists there is nothing to align.
-    if (link == null) return SyncChainAlignment(running: pendingStart);
-    return SyncChainAlignment(
-      status: alignment.status,
-      stale: alignment.stale,
-      builtAt: alignment.builtAt,
-      samplesDone: alignment.samplesDone,
-      samplesTotal: alignment.samplesTotal,
-      buildBlocked: alignmentBlocked,
-      buildError: alignment.error,
-      running: pendingStart || _alignmentRunningNow,
-    );
-  }
-
-  static SyncChainBook? _book(EditionLinkMemberWire? m) => m == null
+  SyncChainEdition? _edition(PositionSyncEditionFiles? e, int? progress) => e == null
       ? null
-      : SyncChainBook(
-          id: m.id, title: m.title, authorName: m.authorName, coverVersion: m.coverVersion, progress: m.progressPercentage);
+      : SyncChainEdition(
+          title: e.title,
+          formatName: e.formatName,
+          fileCount: e.fileIds.length,
+          sizeBytes: e.sizeBytes,
+          progress: progress,
+        );
 
-  SyncChainSnapshot get snapshot => _snapshotFor(sides);
-
-  /// The snapshot as the server has it, for listing the work's editions:
-  /// the proposed match stays whatever the sheet has picked or set aside.
-  SyncChainSnapshot get availableSnapshot => _snapshotFor(_sidesFor(true));
-
-  SyncChainSnapshot _snapshotFor(({SyncChainSide ebook, SyncChainSide audiobook}) s) {
-    final ra = readAlong;
-    final issue = info?.readAloudIssue;
-    final output = ra.outputBook;
+  SyncChainSnapshot get snapshot {
+    final i = info;
+    final audio = progress.audio;
     return SyncChainSnapshot(
-      thisBook: thisBook,
-      linked: link != null,
-      ebook: s.ebook,
-      audiobook: s.audiobook,
-      alignment: _alignmentSnapshot,
-      readAlong: SyncChainReadAlong(
-        member: _book(readAlongMember),
-        status: ra.status,
-        blocked: ra.blocked,
-        phase: ra.phase,
-        remoteTask: ra.remoteTask,
-        remoteProgress: ra.remoteProgress,
-        queuePosition: ra.queuePosition,
-        outputBook: output == null ? null : SyncChainBook(id: output.id, title: output.title),
-        thisBook: _isReadAlongPage ? _currentBook : null,
-        error: ra.error,
-        mutating: readAlongMutating,
-        memberPending: _reloadingMember && _missingReadAlongMemberId != null,
+      bookId: bookId,
+      coverVersion: i?.coverVersion,
+      ebook: _edition(i?.ebook, _filesProgress(i?.ebook)),
+      readAlong: _edition(i?.readAlong, _filesProgress(i?.readAlong)),
+      audiobook: _edition(i?.audiobook, audio == null ? null : displayPercentage(audio, audio >= 100)),
+      readAloudSlot: _slot,
+      alignment: SyncChainAlignment(
+        status: alignment.status,
+        stale: alignment.stale,
+        builtAt: alignment.builtAt,
+        samplesDone: alignment.samplesDone,
+        samplesTotal: alignment.samplesTotal,
+        buildBlocked: alignmentBlocked,
+        buildError: alignment.error,
+        running: _alignmentRunning(alignment.status) || alignmentMutating,
       ),
-      // Only known on the audiobook and read-along pages.
-      readAloudIssue: thisBook != SyncEdition.ebook && issue != null
-          ? ReadAloudIssueView(readAloudIssueMessage(issue.reason,
-              narrationFile: issue.narrationFile,
-              narrationSeconds: issue.narrationSeconds,
-              chapter: issue.chapter,
-              chapterSeconds: issue.chapterSeconds))
-          : null,
+      readAloud: i?.readAloudSync ?? const ReadAloudSync(),
       abs: perms.abs ? SyncChainAbs(configured: absConfigured, link: _absMirror, live: _absLiveMirror, checking: absChecking) : null,
-      can: SyncChainPermissions(editLink: perms.editLink, generate: perms.generate, rebuild: perms.rebuild && link != null),
+      canAlign: perms.align,
     );
   }
 
@@ -491,10 +356,8 @@ class PositionSyncController extends ChangeNotifier {
     return l == null
         ? null
         : AbsLink(
-            audioBookId: l.audioBookId,
             absLibraryItemId: l.absLibraryItemId,
             title: l.title,
-            authorName: l.authorName,
             libraryName: l.libraryName,
             direction: l.direction,
             syncing: l.syncing,
@@ -518,64 +381,31 @@ class PositionSyncController extends ChangeNotifier {
   SyncChain get chain => _chain ??= buildSyncChain(snapshot);
 
   SyncButtonState get buttonState {
-    // A failed first load reads as not linked, with no dot.
-    if (loaded && forBook == null) return SyncButtonState.notLinked;
-    return syncButtonState(loaded: loaded, tone: chain.header.tone);
+    // A failed first load reads as not syncing, with no dot.
+    if (loaded && info == null) return SyncButtonState.notLinked;
+    return syncButtonState(loaded: loaded, tone: chain.header.tone, creating: creating);
   }
 
-  String get buttonTooltip => syncButtonTooltip(
-        linked: link != null,
-        audioModality: info?.modality == PositionSyncModality.audio,
-        readAlongStatus: readAlong.status,
-        readAlongMutating: readAlongMutating,
-        alignmentRunning: _alignmentRunningNow,
-        alignmentStatus: alignment.status,
-        alignmentStale: alignment.stale,
-        membersWithoutText: members != null && members!.text == null,
-      );
+  String get buttonTooltip => PositionSyncCopy.tooltip(
+      creating && chain.header.tone != ChainTone.info ? readAloudStageLabel(_job?.stage) : chain.header.label);
 
-  /// The building ring's fill: alignment samples, or Storyteller's own
-  /// progress while it reports one; null spins.
+  /// The building ring's fill: alignment samples, or the read-aloud job's
+  /// own progress; null spins.
   double? get buttonProgress {
-    if (_alignmentRunningNow || pendingStart) {
+    if (_alignmentRunning(alignment.status) || alignmentMutating) {
       final done = alignment.samplesDone;
       final total = alignment.samplesTotal;
       return done != null && total != null && total > 0 ? (done / total).clamp(0.0, 1.0) : null;
     }
-    final stage = readAlong.status == ReadAlongStatus.queued ? 0 : stageIndex(readAlong.phase, readAlong.remoteTask);
-    final p = readAlongPercent(stage, readAlong.remoteProgress);
-    return p == null ? null : p / 100;
-  }
-
-  StorytellerExistingMatchWire? get existingMatch {
-    for (final m in existing) {
-      if (m.aligned) return m;
-    }
-    return null;
-  }
-
-  String? get targetLibraryName {
-    final chosen = chosenTargetLibraryId;
-    if (chosen == null) return readAlong.targetLibraryName;
-    for (final l in targetLibraries) {
-      if (l.id == chosen) return l.name;
-    }
-    return null;
-  }
-
-  /// Leaving from the audiobook dissolves the whole link; leaving from the
-  /// ebook keeps the read-along on the audiobook.
-  String get unlinkDescription {
-    if (readAlongMember == null) return PositionSyncCopy.unlinkDescription;
-    return thisBook == SyncEdition.audiobook
-        ? PositionSyncCopy.unlinkDescriptionReadAlong
-        : PositionSyncCopy.unlinkDescriptionReadAlongStays;
+    final j = _job;
+    if (j == null || j.status != ReadAloudJobStatus.processing) return null;
+    return (j.progress / 100).clamp(0.0, 1.0);
   }
 
   // ─── Loading ──────────────────────────────────────────────
 
-  /// Read up front so the button reflects the real state before the sheet
-  /// is opened. Runs once per controller.
+  /// Read up front so the button and the Editions card reflect the real
+  /// state before the sheet is opened. Runs once per controller.
   Future<void> loadInitial() async {
     if (_initialStarted) return;
     _initialStarted = true;
@@ -583,6 +413,7 @@ class PositionSyncController extends ChangeNotifier {
       final (p, i) = await (api.positionSyncPermissions(), api.positionSyncBookInfo(bookId)).wait;
       perms = p;
       info = i;
+      loadError = null;
     } on ParallelWaitError catch (e) {
       // Keep whichever read worked.
       final (p, i) = e.values as (PositionSyncPermissions?, PositionSyncBookInfo?);
@@ -593,61 +424,14 @@ class PositionSyncController extends ChangeNotifier {
       debugPrint('[PositionSync] book info for $bookId: $e');
     }
     if (_disposed) return;
-    await load();
-    if (link != null) unawaited(_fetchBuildStatuses());
-  }
-
-  // Without a link the server checks the audiobook it is told about, so a
-  // read-along that audiobook holds belongs to the pair on screen.
-  int? get _forBookCounterpartId => link == null && thisBook == SyncEdition.ebook ? selected?.bookId : null;
-
-  Future<void> load() async {
-    final req = ++_loadReq;
-    final counterpartId = _forBookCounterpartId;
-    _requestedCounterpartId = counterpartId;
-    loading = true;
+    if (info == null) loadError = PositionSyncCopy.loadFailed;
+    loaded = true;
     _changed();
-    try {
-      final r = await api.editionLinkForBook(bookId, counterpartId: counterpartId);
-      if (_disposed || req != _loadReq) return;
-      forBook = r;
-      loadError = null;
-    } catch (e) {
-      if (_disposed || req != _loadReq) return;
-      debugPrint('[PositionSync] for-book $bookId: $e');
-      loadError = PositionSyncCopy.loadFailed;
-    } finally {
-      if (!_disposed && req == _loadReq) {
-        loaded = true;
-        loading = false;
-        _changed();
-      }
-    }
+    await Future.wait([_loadProgress(), _alFetchIfWhisper(), _absLoadConfigured(), _loadCapability()]);
   }
 
-  Future<void> _fetchBuildStatuses() async {
-    if (link == null) return;
-    await Future.wait([_alFetch(pairBookId), _raFetch(pairBookId, forget: true)]);
-  }
-
-  // A build of an unlinked pair is only reachable through its pick, so a
-  // reopen during it, after it failed, or after it finished unattached keeps
-  // that pair rather than the proposal.
-  bool get _keepsPick =>
-      _readAlongInFlight(readAlong.status) ||
-      readAlong.status == ReadAlongStatus.failed ||
-      (readAlong.status == ReadAlongStatus.ready && readAlong.outputBook != null && readAlongMember == null);
-
-  /// The sheet opened: start over on the choices made in it and read
-  /// everything it shows.
+  /// The sheet opened: read everything it shows again.
   Future<void> open() async {
-    if (!_keepsPick) {
-      picked = null;
-      proposalDismissed = false;
-    }
-    chosenTargetLibraryId = null;
-    keepRemoteCopyTouched = false;
-    keepRemoteCopy = _keepRemoteCopyDefault;
     absActionError = null;
     resetSearch();
     if (!_initialStarted) await loadInitial();
@@ -656,42 +440,59 @@ class PositionSyncController extends ChangeNotifier {
     // answer once it has one.
     try {
       perms = await api.positionSyncPermissions();
-      info ??= await api.positionSyncBookInfo(bookId);
+      info = await api.positionSyncBookInfo(bookId);
+      loadError = null;
     } catch (e) {
       debugPrint('[PositionSync] book info for $bookId: $e');
+      if (info == null) loadError = PositionSyncCopy.loadFailed;
     }
     if (_disposed) return;
-    _opened = true;
-    final configured = _absLoadConfigured();
-    await load();
-    if (_disposed) return;
-    if (link != null) {
-      unawaited(_fetchBuildStatuses());
-      if (perms.generate && readAlongMember == null) {
-        unawaited(fetchExisting());
-        unawaited(loadTargetLibraries());
-      }
-    } else if (perms.generate || selected != null) {
-      // Read on an unlinked book too: the chain has to know whether
-      // Storyteller is usable, and whether the matched pair already has a
-      // read-along that the link would bring back.
-      final cp = selected?.bookId;
-      unawaited(_raFetch(pairBookId, counterpartId: cp, forget: cp == null));
-      if (perms.generate) unawaited(loadTargetLibraries());
+    _changed();
+    await Future.wait([
+      _loadProgress(),
+      _alFetchIfWhisper(),
+      _absLoadConfigured(),
+      _absLoad(),
+      _loadCapability(),
+    ]);
+  }
+
+  Future<void> _loadProgress() async {
+    try {
+      final p = await api.positionSyncProgress(bookId);
+      if (_disposed) return;
+      progress = p;
+      _changed();
+    } catch (e) {
+      debugPrint('[PositionSync] progress for $bookId: $e');
     }
-    await _absLoad(absAudioBookId);
-    await configured;
+  }
+
+  /// A job that finished added a read-aloud file, which changes the whole
+  /// chain: the detail is read past its cache.
+  Future<void> _reloadBook() async {
+    try {
+      final i = await api.positionSyncBookInfo(bookId, fresh: true);
+      if (_disposed) return;
+      info = i;
+      _changed();
+      await _loadProgress();
+    } catch (e) {
+      debugPrint('[PositionSync] book reload for $bookId: $e');
+    }
   }
 
   // ─── Alignment ────────────────────────────────────────────
 
-  void _alSchedule(int bookId) {
+  Future<void> _alFetchIfWhisper() => _usesWhisper ? _alFetch() : Future.value();
+
+  void _alSchedule() {
     _alTimer?.cancel();
     _alTimer = null;
     if (_parked || !_alignmentRunning(alignment.status)) return;
     _alTimer = Timer(_alignmentPoll, () {
       _alTimer = null;
-      unawaited(_alFetch(bookId));
+      unawaited(_alFetch());
     });
   }
 
@@ -713,7 +514,7 @@ class PositionSyncController extends ChangeNotifier {
     return next == _alBaseStatus && builtAt == _alBaseBuiltAt;
   }
 
-  Future<void> _alFetch(int bookId) async {
+  Future<void> _alFetch() async {
     final req = ++_alReq;
     try {
       final r = await api.alignmentStatus(bookId);
@@ -728,7 +529,7 @@ class PositionSyncController extends ChangeNotifier {
     } finally {
       // Only the latest read drives polling, and never after disposal.
       if (!_disposed && req == _alReq) {
-        _alSchedule(bookId);
+        _alSchedule();
         _changed();
       }
     }
@@ -736,8 +537,8 @@ class PositionSyncController extends ChangeNotifier {
 
   /// False when the request itself failed; a refusal sets
   /// [alignmentBlocked] instead.
-  Future<bool> _alBuild(int bookId, {bool force = false}) {
-    final f = _alRequestBuild(bookId, force);
+  Future<bool> _alBuild({bool force = false}) {
+    final f = _alRequestBuild(force);
     _pendingAlBuild = f;
     f.whenComplete(() {
       if (identical(_pendingAlBuild, f)) _pendingAlBuild = null;
@@ -745,7 +546,7 @@ class PositionSyncController extends ChangeNotifier {
     return f;
   }
 
-  Future<bool> _alRequestBuild(int bookId, bool force) async {
+  Future<bool> _alRequestBuild(bool force) async {
     alignmentMutating = true;
     alignmentBlocked = null;
     final baseStatus = alignment.status;
@@ -769,36 +570,11 @@ class PositionSyncController extends ChangeNotifier {
       _alAwaitPolls = 0;
       _alBaseStatus = baseStatus;
       _alBaseBuiltAt = baseBuiltAt;
-      await _alFetch(bookId);
+      await _alFetch();
       return true;
     } catch (e) {
       debugPrint('[PositionSync] alignment build for $bookId: $e');
-      if (!_disposed) await _alFetch(bookId);
-      return false;
-    } finally {
-      alignmentMutating = false;
-      _changed();
-    }
-  }
-
-  Future<bool> _alCancel(int bookId) async {
-    alignmentMutating = true;
-    _changed();
-    try {
-      // A cancel sent before the build lands finds nothing to stop.
-      final pending = _pendingAlBuild;
-      if (pending != null) {
-        await pending;
-        alignmentMutating = true;
-      }
-      await api.cancelAlignment(bookId);
-      // A cancelled build never gets its row.
-      _alAwaiting = false;
-      _alAwaitPolls = 0;
-      await _alFetch(bookId);
-      return true;
-    } catch (e) {
-      debugPrint('[PositionSync] alignment cancel for $bookId: $e');
+      if (!_disposed) await _alFetch();
       return false;
     } finally {
       alignmentMutating = false;
@@ -807,545 +583,229 @@ class PositionSyncController extends ChangeNotifier {
   }
 
   Future<void> buildAlignmentAction({bool force = false}) async {
-    if (!await _alBuild(pairBookId, force: force)) {
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastAlignBuildFailed);
-    }
+    if (!await _alBuild(force: force)) _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastAlignBuildFailed);
   }
 
+  /// Only a cancel in flight locks the cancel button: a build in flight is
+  /// exactly what it stops.
   Future<void> cancelAlignmentAction() async {
     cancelling = true;
     _changed();
     try {
-      if (!await _alCancel(pairBookId)) {
-        _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastSyncCancelKeptRunning);
-      }
+      // A cancel sent before the build lands finds nothing to stop.
+      final pending = _pendingAlBuild;
+      if (pending != null) await pending;
+      await api.cancelAlignment(bookId);
+      // A cancelled build never gets its row.
+      _alAwaiting = false;
+      _alAwaitPolls = 0;
+      await _alFetch();
+    } catch (e) {
+      debugPrint('[PositionSync] alignment cancel for $bookId: $e');
+      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastSyncCancelKeptRunning);
     } finally {
       cancelling = false;
       _changed();
     }
   }
 
-  // ─── Read-along ───────────────────────────────────────────
+  // ─── Read-aloud sync ──────────────────────────────────────
 
-  void _raSchedule(int bookId) {
-    _raTimer?.cancel();
-    _raTimer = null;
-    if (_disposed || _parked || !_readAlongInFlight(readAlong.status)) return;
-    _raTimer = Timer(_readAlongPoll, () {
-      _raTimer = null;
-      unawaited(_raFetch(bookId));
-    });
-  }
-
-  // A running build is only found through the counterpart it started with,
-  // so a read naming another one would lose it.
-  void _rememberCounterpart(int bookId, int? counterpartId) {
-    final cp = _raCounterpart;
-    final running = cp?.bookId == bookId && _readAlongInFlight(readAlong.status);
-    if (running && counterpartId != null && counterpartId != cp?.counterpartId) return;
-    _raCounterpart = counterpartId == null ? null : (bookId: bookId, counterpartId: counterpartId);
-  }
-
-  int? _counterpartOf(int bookId) => _raCounterpart?.bookId == bookId ? _raCounterpart?.counterpartId : null;
-
-  int? get readAlongCounterpart => _counterpartOf(pairBookId);
-
-  ReadAlongStatusWire _raWith(ReadAlongStatus status, {ReadAlongBlock? blocked}) {
-    final r = readAlong;
-    return ReadAlongStatusWire(
-      status: status,
-      blocked: blocked,
-      phase: r.phase,
-      remoteTask: r.remoteTask,
-      remoteProgress: r.remoteProgress,
-      outputBook: r.outputBook,
-      targetLibraryId: r.targetLibraryId,
-      targetLibraryName: r.targetLibraryName,
-      epubBytes: r.epubBytes,
-      audioBytes: r.audioBytes,
-      readAlongBytes: r.readAlongBytes,
-      keepRemoteCopyByDefault: r.keepRemoteCopyByDefault,
-      remoteCopyReclaimable: r.remoteCopyReclaimable,
-      startedAt: r.startedAt,
-      builtAt: r.builtAt,
-    );
-  }
-
-  /// Nothing known about a build any more; the destination and copy facts
-  /// stay.
-  void _raUnknown() {
-    final r = readAlong;
-    readAlong = ReadAlongStatusWire(
-      targetLibraryId: r.targetLibraryId,
-      targetLibraryName: r.targetLibraryName,
-      epubBytes: r.epubBytes,
-      audioBytes: r.audioBytes,
-      readAlongBytes: r.readAlongBytes,
-      keepRemoteCopyByDefault: r.keepRemoteCopyByDefault,
-      remoteCopyReclaimable: r.remoteCopyReclaimable,
-    );
-  }
-
-  void _raGiveUp() {
-    _raAwaiting = false;
-    _raAwaitPolls = 0;
-    _raFailures = 0;
-    _raUnknown();
-  }
-
-  bool _raKeepAwaiting() {
-    if (!_raAwaiting) return false;
-    _raAwaitPolls++;
-    if (_raAwaitPolls < _maxAwaitBuildRowPolls) return true;
-    _raGiveUp();
-    return false;
-  }
-
-  bool _raStaleRead(ReadAlongStatus next, String? builtAt) {
-    if (!_raAwaiting || _readAlongInFlight(next)) return false;
-    if (next == ReadAlongStatus.none) return true;
-    return next == _raBaseStatus && builtAt == _raBaseBuiltAt;
-  }
-
-  void _raApply(ReadAlongStatusWire r) {
-    final previous = readAlong.status;
-    readAlong = r;
-    _keepRemoteCopyDefault = r.keepRemoteCopyByDefault;
-    if (!keepRemoteCopyTouched) keepRemoteCopy = r.keepRemoteCopyByDefault;
-    // A finished build adds the read-along member, which only the for-book
-    // answer knows about.
-    if (r.status == ReadAlongStatus.ready && _readAlongInFlight(previous)) unawaited(load());
-  }
-
-  /// [counterpartId] names the edition an unlinked book is matched with and
-  /// is remembered; [forget] drops it (the pair is linked); neither reuses
-  /// the remembered one.
-  Future<void> _raFetch(int bookId, {int? counterpartId, bool forget = false}) async {
-    if (_raLastBookId != bookId) {
-      _raLastBookId = bookId;
-      keepRemoteCopyTouched = false;
-    }
-    if (forget || counterpartId != null) _rememberCounterpart(bookId, forget ? null : counterpartId);
-    final req = ++_raReq;
+  Future<void> setReadAloudSync(bool on) async {
+    final mode = on ? ReadAloudSyncMode.auto : ReadAloudSyncMode.disabled;
+    final current = info;
+    if (readAloudSaving || current == null || current.readAloudSync.mode == mode) return;
+    readAloudSaving = true;
+    _changed();
     try {
-      final r = await api.readAlongStatus(bookId, counterpartId: _counterpartOf(bookId));
-      if (_disposed || req != _raReq) return;
-      _raFailures = 0;
-      if (_raStaleRead(r.status, r.builtAt) && _raKeepAwaiting()) return;
-      _raAwaiting = false;
-      _raAwaitPolls = 0;
-      _raApply(r);
-    } catch (e) {
-      if (_disposed || req != _raReq) return;
-      // A visible build survives a few failed reads in a row.
-      _raFailures++;
-      if (readAlong.status == ReadAlongStatus.none || _raFailures >= _maxReadAlongFailures) _raGiveUp();
-    } finally {
-      if (!_disposed && req == _raReq) {
-        readAlongChecked = true;
-        _raSchedule(bookId);
-        _changed();
-      }
-    }
-  }
-
-  /// Forgets everything read for a pair that no longer exists, including
-  /// reads still in flight.
-  void _raReset() {
-    _raTimer?.cancel();
-    _raTimer = null;
-    _raReq++;
-    _existingReq++;
-    _raAwaiting = false;
-    _raAwaitPolls = 0;
-    _raFailures = 0;
-    _raCounterpart = null;
-    readAlong = const ReadAlongStatusWire();
-    readAlongChecked = false;
-    existing = const [];
-  }
-
-  void setKeepRemoteCopy(bool value) {
-    keepRemoteCopyTouched = true;
-    keepRemoteCopy = value;
-    _changed();
-  }
-
-  void setTargetLibrary(int? id) {
-    chosenTargetLibraryId = id;
-    _changed();
-  }
-
-  Future<void> fetchExisting([int? pairId]) async {
-    final id = pairId ?? pairBookId;
-    final req = ++_existingReq;
-    final matches = await api.readAlongExisting(id, counterpartId: _counterpartOf(id));
-    if (_disposed || req != _existingReq) return;
-    existing = matches;
-    _changed();
-  }
-
-  Future<void> loadTargetLibraries() async {
-    try {
-      final libs = await api.readAlongTargetLibraries();
+      final sync = await api.setReadAloudSyncMode(bookId, mode);
       if (_disposed) return;
-      targetLibraries = libs;
-      _changed();
+      info = PositionSyncBookInfo(
+        coverVersion: current.coverVersion,
+        language: current.language,
+        ebook: current.ebook,
+        readAlong: current.readAlong,
+        audiobook: current.audiobook,
+        readAloudSync: sync,
+      );
     } catch (e) {
-      debugPrint('[PositionSync] read-along libraries: $e');
+      debugPrint('[PositionSync] read-aloud sync for $bookId: $e');
+      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastReadAloudSyncFailed);
+    } finally {
+      readAloudSaving = false;
+      _changed();
     }
   }
 
-  /// Starts (or imports, with [useExistingUuid]) a read-along for the pair
-  /// on screen. A failed build resumes from its last phase, so only a
-  /// deliberate rebuild passes [force].
-  Future<ReadAlongBuildOutcome> generate({String? useExistingUuid, bool force = false}) async {
-    final pairId = pairBookId;
-    final counterpartId = link == null ? selected?.bookId : null;
-    _rememberCounterpart(pairId, counterpartId);
-    final f = _raRequestBuild(pairId,
-        force: force,
-        counterpartId: counterpartId,
-        targetLibraryId: chosenTargetLibraryId,
-        useExistingUuid: useExistingUuid,
-        // Sent only once the user chose, so an untouched build follows the
-        // server's setting.
-        cleanUpRemote: keepRemoteCopyTouched ? !keepRemoteCopy : null);
-    _pendingRaBuild = f;
-    f.whenComplete(() {
-      if (identical(_pendingRaBuild, f)) _pendingRaBuild = null;
+  // ─── Read-aloud generator ─────────────────────────────────
+
+  bool get _generatorApplies => perms.generate && _usesWhisper;
+
+  Future<void> _loadCapability() async {
+    // A job already running is followed even when the book stopped
+    // qualifying (say, it gained its read-aloud mid-way).
+    if (!_generatorApplies && _job == null) return;
+    final req = ++_capReq;
+    try {
+      final c = await api.readAloudCapability(bookId);
+      if (_disposed || req != _capReq) return;
+      capability = c;
+      _applyJob(c.latestJob, fromUpdate: false);
+    } catch (e) {
+      // A failed recheck keeps the last good answer.
+      debugPrint('[PositionSync] read-aloud capability for $bookId: $e');
+    } finally {
+      if (!_disposed && req == _capReq) _changed();
+    }
+  }
+
+  void _applyJob(ReadAloudJobWire? next, {required bool fromUpdate}) {
+    if (next != null && next.bookId != bookId) return;
+    final previous = _job;
+    // Polls and answers can cross; an older copy never overwrites a newer one.
+    if (next != null && previous != null && next.id == previous.id) {
+      final a = DateTime.tryParse(next.updatedAt ?? '');
+      final b = DateTime.tryParse(previous.updatedAt ?? '');
+      if (a != null && b != null && a.isBefore(b)) return;
+    }
+    if (next?.id != previous?.id) _slotError = null;
+    _job = next;
+    if (next != null && next.completed && _completedJobIds.add(next.id)) {
+      final watched = previous?.id == next.id ? !previous!.completed : fromUpdate;
+      if (watched) unawaited(_reloadBook());
+    }
+    // A job that just stopped frees the book's slot and may have added a
+    // file, so what can be made moved.
+    if (fromUpdate && previous?.active == true && next?.active != true) unawaited(_loadCapability());
+    _jobSchedule();
+    _changed();
+  }
+
+  void _jobSchedule() {
+    _jobTimer?.cancel();
+    _jobTimer = null;
+    final j = _job;
+    if (_parked || j == null || !j.active || _pollStoppedFor == j.id) return;
+    _jobTimer = Timer(j.running ? _jobPoll : _reviewPoll, () {
+      _jobTimer = null;
+      unawaited(_refreshJob());
     });
-    final outcome = await f;
-    if (outcome == ReadAlongBuildOutcome.failed) {
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastReadAlongBuildFailed);
-    } else if (outcome == ReadAlongBuildOutcome.ready) {
-      _notice(PositionSyncNoticeKind.info, PositionSyncCopy.toastReadAlongAlreadyReady);
-    }
-    return outcome;
   }
 
-  Future<ReadAlongBuildOutcome> _raRequestBuild(int bookId,
-      {required bool force, int? counterpartId, int? targetLibraryId, String? useExistingUuid, bool? cleanUpRemote}) async {
-    readAlongMutating = true;
-    readAlong = _raWith(readAlong.status);
-    final baseStatus = readAlong.status;
-    final baseBuiltAt = readAlong.builtAt;
-    _changed();
+  Future<void> _refreshJob() async {
+    final current = _job;
+    if (current == null) return;
     try {
-      final r = await api.buildReadAlong(bookId,
-          force: force,
-          counterpartId: counterpartId,
-          targetLibraryId: targetLibraryId,
-          useExistingUuid: useExistingUuid,
-          cleanUpRemote: cleanUpRemote);
-      if (_disposed) return ReadAlongBuildOutcome.failed;
-      if (r.blocked != null) {
-        readAlong = _raWith(r.status, blocked: r.blocked);
-        // A refusal can still hand back a build someone else started.
-        _raSchedule(bookId);
-        return ReadAlongBuildOutcome.blocked;
-      }
-      // An unforced build of a pair that already has a read-along answers
-      // ready without building.
-      if (!_readAlongInFlight(r.status)) {
-        readAlong = _raWith(r.status);
-        await _raFetch(bookId);
-        return readAlong.status == ReadAlongStatus.ready ? ReadAlongBuildOutcome.ready : ReadAlongBuildOutcome.blocked;
-      }
-      readAlong = _raWith(r.status);
-      _raAwaiting = true;
-      _raAwaitPolls = 0;
-      _raBaseStatus = baseStatus;
-      _raBaseBuiltAt = baseBuiltAt;
-      await _raFetch(bookId);
-      return ReadAlongBuildOutcome.started;
-    } catch (e) {
-      debugPrint('[PositionSync] read-along build for $bookId: $e');
-      if (!_disposed) await _raFetch(bookId);
-      return ReadAlongBuildOutcome.failed;
-    } finally {
-      readAlongMutating = false;
-      _changed();
-    }
-  }
-
-  Future<ReadAlongCancelOutcome> _raCancel(int bookId) async {
-    readAlongMutating = true;
-    _changed();
-    try {
-      final pending = _pendingRaBuild;
-      if (pending != null) {
-        await pending;
-        readAlongMutating = true;
-      }
-      final outcome = await api.cancelReadAlong(bookId, counterpartId: _counterpartOf(bookId));
-      if (outcome != ReadAlongCancelOutcome.cancelled) return outcome;
-      _raAwaiting = false;
-      _raAwaitPolls = 0;
-      await _raFetch(bookId);
-      return ReadAlongCancelOutcome.cancelled;
-    } finally {
-      readAlongMutating = false;
-      _changed();
-    }
-  }
-
-  Future<void> retryReadAlong() => generate();
-
-  Future<void> rebuildReadAlong() => generate(force: true);
-
-  Future<void> cancelReadAlongAction() async {
-    final outcome = await _raCancel(pairBookId);
-    if (outcome == ReadAlongCancelOutcome.tooLate) {
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastReadAlongCancelTooLate);
-    } else if (outcome == ReadAlongCancelOutcome.failed) {
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastReadAlongCancelUnavailable);
-    }
-  }
-
-  // ─── Edition links ────────────────────────────────────────
-
-  /// Runs one edition-link change and reloads this book's answer after it.
-  /// Returns the failure, or null when it went through.
-  Future<PositionSyncRequestFailure?> _mutate(Future<void> Function() call) async {
-    _linkMutating = true;
-    _changed();
-    try {
-      await call();
-      candidates = const [];
-      _linkMutating = false;
-      await load();
-      return null;
+      final next = await api.readAloudJob(current.id);
+      if (_disposed) return;
+      _applyJob(next, fromUpdate: true);
     } on PositionSyncRequestFailure catch (e) {
-      return e;
+      if (_disposed) return;
+      if (e.status == 403 || e.status == 404) {
+        _pollStoppedFor = current.id;
+        _jobTimer?.cancel();
+        _jobTimer = null;
+        if (e.status == 404) unawaited(_loadCapability());
+        return;
+      }
+      _jobSchedule();
     } catch (e) {
-      debugPrint('[PositionSync] edition link change for $bookId: $e');
-      return const PositionSyncRequestFailure(0, '');
-    } finally {
-      _linkMutating = false;
-      _changed();
+      // The next poll catches up; a transient failure is not worth a message.
+      if (!_disposed) _jobSchedule();
     }
   }
 
-  // A fresh pair gets its alignment straight away. The read-along is never
-  // started here: it is hours of work and always asked for on its own.
-  Future<void> _alignNewPair(int pairId) async {
-    _notice(PositionSyncNoticeKind.success, PositionSyncCopy.toastLinked);
-    await _alBuild(pairId);
-    pendingStart = false;
-    _changed();
-    // The pre-link read answered for a book without a pair.
-    unawaited(_raFetch(pairId, forget: true));
-    if (perms.generate) unawaited(fetchExisting(pairId));
+  /// What upstream's dialog would start with no changes, or null when it
+  /// would need the reader to pick something.
+  ReadAloudRequest? defaultRequest(String? savedLanguage) {
+    final c = capability;
+    if (c == null || c.epubFiles.isEmpty || c.audioFileIds.isEmpty) return null;
+    final language = readAloudLanguage(c.supportedLanguages, info?.language, savedLanguage);
+    if (language == null) return null;
+    return ReadAloudRequest(epubFileId: c.epubFiles.first.id, audioFileIds: c.audioFileIds, language: language);
   }
 
-  Future<void> linkPair() async {
-    // Taken before the link reloads this book's state.
-    final pairId = pairBookId;
-    final m = members;
-    final s = selected;
-    final detached = _detachedReadAlong;
-    // A page whose pair the server already knows links through the pair's
-    // own books.
-    final ({int source, int counterpart})? request = detached && m?.text != null
-        ? (source: m!.text!.id, counterpart: m.audio.id)
-        : m != null && m.text == null && (detached || link != null) && s != null
-            ? (source: m.audio.id, counterpart: s.bookId)
-            : !detached && link == null && s != null
-                ? (source: bookId, counterpart: s.bookId)
-                : null;
-    if (request == null) return;
-    pendingStart = true;
-    final failure = await _mutate(() => api.linkEditions(request.source, request.counterpart));
-    if (failure != null) {
-      pendingStart = false;
-      _changed();
-      final reason = (failure.status == 400 || failure.status == 409) && failure.message.isNotEmpty
-          ? failure.message
-          : PositionSyncCopy.toastLinkFailed;
-      _notice(PositionSyncNoticeKind.error, reason);
-      return;
+  /// One tap: the dialog's own defaults. False when it needs a choice, and
+  /// the sheet opens the options instead.
+  Future<bool> createReadAloud() async {
+    if (jobAction != null || resolveReadAloudEntry(enabled: _generatorApplies, capability: capability, job: _job) is! ReadAloudEntryAvailable) {
+      return true;
     }
-    await _alignNewPair(pairId);
-  }
-
-  /// Stops whatever this pair has running. A refused cancel is reported and
-  /// the unlink still happens, except for a read-along already being
-  /// imported onto this link.
-  Future<bool> _stopPairBuilds(int pairId) async {
-    if (_readAlongInFlight(readAlong.status) || readAlongMutating) {
-      final outcome = await _raCancel(pairId);
-      if (outcome == ReadAlongCancelOutcome.tooLate) {
-        _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastReadAlongCancelTooLate);
-        return false;
-      }
-      if (outcome == ReadAlongCancelOutcome.failed) {
-        _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastReadAlongCancelKeptRunning);
-      }
-    }
-    if (_alignmentRunningNow) {
-      if (!await _alCancel(pairId)) _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastSyncCancelKeptRunning);
-    }
+    _slotError = null;
+    final request = defaultRequest(await api.readAloudDefaultLanguage());
+    if (request == null) return false;
+    await createReadAloudWith(request);
     return true;
   }
 
-  EditionLinkCandidateWire? _linkedCounterpartCandidate() {
-    final m = members;
-    // The ebook is the side that leaves on the read-along page too, so only
-    // the ebook page restores the audiobook.
-    final counterpart = m == null ? null : (role == EditionLinkRole.text ? m.audio : m.text);
-    if (counterpart != null) {
-      return EditionLinkCandidateWire(
-        bookId: counterpart.id,
-        title: counterpart.title,
-        authorName: counterpart.authorName,
-        coverVersion: counterpart.coverVersion,
-        progress: counterpart.progressPercentage,
-      );
-    }
-    final summary = forBook?.counterpart;
-    return summary == null
-        ? null
-        : EditionLinkCandidateWire(
-            bookId: summary.id, title: summary.title, authorName: summary.authorName, coverVersion: summary.coverVersion);
-  }
-
-  void _restoreSelection(EditionLinkCandidateWire? candidate) {
-    if (candidate != null && forBook?.proposed?.bookId != candidate.bookId) {
-      picked = candidate;
-      proposalDismissed = true;
-      return;
-    }
-    picked = null;
-    proposalDismissed = false;
-  }
-
-  // Nothing read for the old pair may narrate the next one. The status is
-  // asked for the restored counterpart, or the pair's surviving read-along
-  // would be offered as a new build.
-  void _forgetPair(EditionLinkCandidateWire? candidate) {
-    _restoreSelection(candidate);
-    _raReset();
-    _changed();
-    unawaited(load());
-    unawaited(_alFetch(pairBookId));
-    final cp = selected?.bookId;
-    unawaited(_raFetch(pairBookId, counterpartId: cp, forget: cp == null));
-  }
-
-  /// The switch went off while the pair was still linking. Unlinked through
-  /// the ebook where there is one, so a read-along stays on the audiobook.
-  Future<void> cancelLinking() async {
-    final pairId = pairBookId;
-    final leavingId = members?.text?.id ?? pairId;
-    final candidate = _linkedCounterpartCandidate();
-    cancelling = true;
+  /// Null when the job started, else why not.
+  Future<String?> createReadAloudWith(ReadAloudRequest request) async {
+    if (jobAction != null) return PositionSyncCopy.errorCreate;
+    jobAction = ReadAloudPending.create;
+    _slotError = null;
     _changed();
     try {
-      if (!await _stopPairBuilds(pairId)) return;
-      if (await _mutate(() => api.unlinkEdition(leavingId)) != null) {
-        _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastCancelFailed);
-        return;
-      }
-      _forgetPair(candidate);
+      final created = await api.createReadAloudJob(bookId, request);
+      if (_disposed) return null;
+      _pollStoppedFor = null;
+      _applyJob(created, fromUpdate: true);
+      return null;
+    } catch (e) {
+      debugPrint('[PositionSync] read-aloud create for $bookId: $e');
+      // A rejected selection, a job someone else started or an offline
+      // worker all mean the capability is stale.
+      if (!(e is PositionSyncRequestFailure && e.status == 403)) unawaited(_loadCapability());
+      final error = _createError(e);
+      _slotError = error;
+      return error;
     } finally {
-      cancelling = false;
+      jobAction = null;
       _changed();
     }
   }
 
-  Future<void> unlinkPair() async {
-    final pairId = pairBookId;
-    if (!await _stopPairBuilds(pairId)) return;
-    if (await _mutate(() => api.unlinkEdition(pairId)) != null) {
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastUnlinkFailed);
-      return;
+  Future<void> _mutateJob(ReadAloudPending action, Future<ReadAloudJobWire?> Function(String id) call, String fallback) async {
+    final current = _job;
+    if (current == null || jobAction != null) return;
+    jobAction = action;
+    _slotError = null;
+    _changed();
+    try {
+      final next = await call(current.id);
+      if (_disposed) return;
+      _applyJob(next, fromUpdate: true);
+    } catch (e) {
+      if (_disposed) return;
+      _slotError = _mutationError(e, fallback);
+      // The job may have moved on server-side; show where it is now.
+      await _refreshJob();
+    } finally {
+      jobAction = null;
+      _changed();
     }
-    _notice(PositionSyncNoticeKind.success, PositionSyncCopy.toastUnlinked);
-    _forgetPair(null);
   }
 
-  /// A member side swapped for [candidate]: unlink, then link the kept side
-  /// with it.
-  Future<void> applyChange(SyncEdition edition, EditionLinkCandidateWire candidate) async {
-    final m = members;
-    final keptId = m != null ? (edition == SyncEdition.audiobook ? (m.text?.id ?? bookId) : m.audio.id) : bookId;
-    final pairId = pairBookId;
-    if (_alignmentRunningNow && !await _alCancel(pairId)) {
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastSyncCancelKeptRunning);
-    }
-    if (await _mutate(() => api.unlinkEdition(pairId)) != null) {
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastUnlinkFailed);
-      return;
-    }
-    resetSearch();
-    pendingStart = true;
-    if (await _mutate(() => api.linkEditions(keptId, candidate.bookId)) != null) {
-      pendingStart = false;
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastChangeFailed(candidate.title ?? PositionSyncCopy.untitled));
-      // Offered again as the candidate, so a second try is one tap.
-      _forgetPair(candidate);
-      return;
-    }
-    await _alignNewPair(keptId);
-  }
+  Future<void> cancelReadAloud() =>
+      _mutateJob(ReadAloudPending.cancel, api.cancelReadAloudJob, PositionSyncCopy.errorCancel);
 
-  // With no link yet the read-along attaches to the audiobook alone, which
-  // starts a link without an ebook.
-  Future<void> attachReadAlongAction() async {
-    final readAlongId = readAlong.outputBook?.id ?? (_isReadAlongPage ? bookId : null);
-    final target = link != null ? pairBookId : sides.audiobook.book?.id;
-    if (readAlongId == null || target == null) return;
-    final failure = await _mutate(() => api.attachReadAlong(target, readAlongId));
-    _notice(failure == null ? PositionSyncNoticeKind.success : PositionSyncNoticeKind.error,
-        failure == null ? PositionSyncCopy.toastAttached : PositionSyncCopy.toastAttachFailed);
-  }
+  Future<void> retryReadAloud() =>
+      _mutateJob(ReadAloudPending.retry, api.retryReadAloudJob, PositionSyncCopy.errorRetry);
 
-  Future<void> detachReadAlongAction() async {
-    final member = readAlongMember;
-    if (member == null) return;
-    // The detached output is still ready on a linked pair, which is what the
-    // heal reloads for; a failed detach owes that heal again.
-    final healedBefore = _reloadedForOutputId;
-    _reloadedForOutputId = readAlong.outputBook?.id ?? member.id;
-    if (await _mutate(() => api.unlinkEdition(member.id)) != null) {
-      _reloadedForOutputId = healedBefore;
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastDetachFailed);
-      return;
-    }
-    _notice(PositionSyncNoticeKind.success, PositionSyncCopy.toastDetached);
-    final cp = link != null ? null : selected?.bookId;
-    unawaited(_raFetch(pairBookId, counterpartId: cp, forget: cp == null));
-  }
+  String get reviewUrl => api.readAloudReviewUrl(bookId);
 
-  // ─── Change search ────────────────────────────────────────
+  // ─── Audiobookshelf match search ──────────────────────────
 
   void resetSearch() {
     _searchTimer?.cancel();
     _searchTimer = null;
     _searchReq++;
-    candidates = const [];
     absCandidates = const [];
     searching = false;
     hasSearched = false;
     searchError = null;
   }
 
-  /// Candidates for [edition]'s slot, debounced. They are those of the pair
-  /// member the pick joins, which on a read-along page is not this book.
-  void searchCandidates(SyncEdition edition, String q) {
-    final s = sides;
-    final sourceId = edition == SyncEdition.ebook ? (s.audiobook.book?.id ?? bookId) : (s.ebook.book?.id ?? bookId);
-    _debounceSearch(() async {
-      candidates = await api.editionLinkCandidates(sourceId, q: q);
-    });
-  }
-
-  void searchAbs(String q) => _debounceSearch(() async {
-        absCandidates = await api.absUnmatched(q: q);
-      });
-
-  void _debounceSearch(Future<void> Function() run) {
+  void searchAbs(String q) {
     _searchTimer?.cancel();
     final req = ++_searchReq;
     searching = true;
@@ -1354,12 +814,11 @@ class PositionSyncController extends ChangeNotifier {
     _changed();
     _searchTimer = Timer(_searchDebounce, () async {
       try {
-        await run();
+        final found = await api.absUnmatched(q: q);
         if (_disposed || req != _searchReq) return;
-        searchError = null;
+        absCandidates = found;
       } catch (e) {
         if (_disposed || req != _searchReq) return;
-        candidates = const [];
         absCandidates = const [];
         searchError = PositionSyncCopy.searchFailed;
       } finally {
@@ -1371,35 +830,12 @@ class PositionSyncController extends ChangeNotifier {
     });
   }
 
-  bool isMemberSide(SyncEdition edition) => side(edition).isMember;
-
-  /// A pick for a side that is not a member yet: it becomes the candidate
-  /// the pair switch links.
-  void pick(EditionLinkCandidateWire candidate) {
-    final previous = selected?.bookId;
-    picked = candidate;
-    proposalDismissed = true;
-    resetSearch();
-    _changed();
-    _selectionChanged(previous);
-  }
-
-  // Picking another counterpart before linking changes the pair, and so
-  // whether a read-along exists for it.
-  void _selectionChanged(int? previous) {
-    final next = selected?.bookId;
-    if (link != null || _linkMutating || next == previous) return;
-    final followed = _forBookCounterpartId;
-    final answeredFor = _requestedCounterpartId ?? forBook?.proposed?.bookId;
-    if (followed != null && followed != answeredFor) unawaited(load());
-    if (!perms.generate || _readAlongInFlight(readAlong.status)) return;
-    unawaited(_raFetch(pairBookId, counterpartId: next, forget: next == null));
-  }
-
   // ─── Audiobookshelf ───────────────────────────────────────
 
+  /// Audiobookshelf only ever links the audiobook, so a book without one
+  /// never needs its settings.
   Future<void> _absLoadConfigured() async {
-    if (!perms.abs) return;
+    if (!perms.abs || !_hasAudio) return;
     try {
       final configured = await api.absConfigured();
       if (_disposed) return;
@@ -1411,17 +847,16 @@ class PositionSyncController extends ChangeNotifier {
     }
   }
 
-  Future<void> _absLoad(int? audioBookId) async {
-    _absLoadedFor = audioBookId;
+  Future<void> _absLoad() async {
     final req = ++_absReq;
-    if (!perms.abs || audioBookId == null) {
+    if (!perms.abs || !_hasAudio) {
       absLink = null;
       absLive = null;
       absChecking = false;
       return;
     }
     try {
-      final link = await api.absLinkForBook(audioBookId);
+      final link = await api.absLinkForBook(bookId);
       if (_disposed || req != _absReq) return;
       if (link?.absLibraryItemId != absLink?.absLibraryItemId) absLive = null;
       absLink = link;
@@ -1436,7 +871,7 @@ class PositionSyncController extends ChangeNotifier {
       }
     } catch (e) {
       if (_disposed || req != _absReq) return;
-      debugPrint('[PositionSync] Audiobookshelf link for $audioBookId: $e');
+      debugPrint('[PositionSync] Audiobookshelf link for $bookId: $e');
       absLink = null;
       absLive = null;
       _changed();
@@ -1461,7 +896,7 @@ class PositionSyncController extends ChangeNotifier {
   }
 
   /// [direction] is 'push' or 'pull'. Both sides' positions move, so the
-  /// cards are read again after it.
+  /// progress is read again after it.
   Future<void> absReconcileAction(String direction) async {
     final id = absLink?.absLibraryItemId;
     if (id == null) return;
@@ -1472,7 +907,7 @@ class PositionSyncController extends ChangeNotifier {
       absLive = await api.absReconcile(id, direction);
       absBusy = null;
       _changed();
-      await load();
+      await _loadProgress();
     } on PositionSyncRequestFailure catch (e) {
       absActionError = e.status == 409
           ? PositionSyncCopy.absReconcileBusy
@@ -1505,7 +940,7 @@ class PositionSyncController extends ChangeNotifier {
     _changed();
     try {
       await api.absSetExcluded(id, excluded);
-      await _absLoad(absAudioBookId);
+      await _absLoad();
       _notice(PositionSyncNoticeKind.success, excluded ? PositionSyncCopy.toastAbsPaused : PositionSyncCopy.toastAbsResumed);
     } catch (e) {
       _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastAbsFailed);
@@ -1526,7 +961,7 @@ class PositionSyncController extends ChangeNotifier {
     _changed();
     try {
       await api.absConfirm(id);
-      await _absLoad(absAudioBookId);
+      await _absLoad();
       if (absLink?.syncing == true) _notice(PositionSyncNoticeKind.success, PositionSyncCopy.toastAbsResumed);
     } catch (e) {
       _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastAbsFailed);
@@ -1539,8 +974,7 @@ class PositionSyncController extends ChangeNotifier {
   /// Matches the audiobook with [item] instead of its current
   /// Audiobookshelf item. True when it went through.
   Future<bool> absChange(AbsBookStateWire item) async {
-    final audioBookId = absAudioBookId;
-    if (audioBookId == null) return false;
+    if (!_hasAudio) return false;
     final previous = absLink?.absLibraryItemId;
     final replaces = previous != null && previous != item.absLibraryItemId;
     absBusy = 'change';
@@ -1548,12 +982,12 @@ class PositionSyncController extends ChangeNotifier {
     try {
       if (replaces) await api.absUnlinkBook(previous);
       try {
-        await api.absLinkBook(item.absLibraryItemId, audioBookId);
+        await api.absLinkBook(item.absLibraryItemId, bookId);
       } catch (_) {
         // Best effort: put the previous match back.
         if (replaces) {
           try {
-            await api.absLinkBook(previous, audioBookId);
+            await api.absLinkBook(previous, bookId);
           } catch (_) {}
         }
         rethrow;
@@ -1564,7 +998,7 @@ class PositionSyncController extends ChangeNotifier {
       _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastAbsFailed);
       return false;
     } finally {
-      await _absLoad(audioBookId);
+      await _absLoad();
       absBusy = null;
       _changed();
     }
