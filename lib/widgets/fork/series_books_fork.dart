@@ -28,7 +28,8 @@ extension _ForkSeriesBooks on _SeriesBooksSheetState {
     return ForkShelfGridTile(
       frames: frames,
       item: book,
-      child: GridBookTile(item: book, coverAspectRatio: frames.of(book), sequenceBadge: _getSequenceString(book)),
+      child: GridBookTile(item: book, coverAspectRatio: frames.of(book), sequenceBadge: _getSequenceString(book),
+          showAuthor: _forkShowAuthor),
     );
   }
 
@@ -138,3 +139,50 @@ extension _ForkSeriesBooks on _SeriesBooksSheetState {
     if (picked != null && mounted) picked.onTap();
   }
 }
+
+/// Whether a book's list row or grid tile names the author. It doesn't: a
+/// series is one author's, and BookOrbit's app leaves it out.
+bool get _forkShowAuthor => false;
+
+/// A list row's read status on its right, as BookOrbit's app shows it: a
+/// green check when finished (amber when skimmed), the percentage when
+/// started, nothing before that. A book at 100% counts as finished, as it
+/// does for the sheet's finished count and Up next.
+Widget _forkReadStatus(ColorScheme cs, TextTheme tt, AppLocalizations l,
+    {required double progress, required bool isFinished, required bool isSkimmed}) {
+  Widget child = const SizedBox.shrink();
+  if (isFinished || progress >= 1.0) {
+    final skimmed = isFinished && isSkimmed;
+    final color = skimmed ? Colors.amberAccent.shade200 : Colors.greenAccent.shade400;
+    child = Semantics(
+      label: skimmed ? l.readStatusSkimmed : l.finished,
+      child: Container(
+        width: 30, height: 30,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        child: const Icon(Icons.check_rounded, size: 20, color: Colors.black87),
+      ),
+    );
+  } else if (progress > 0) {
+    child = Text('${(progress * 100).clamp(1, 99).round()}%',
+        style: tt.labelLarge?.copyWith(color: cs.onSurfaceVariant, fontWeight: FontWeight.w600));
+  }
+  return Padding(
+    padding: const EdgeInsets.only(right: 14),
+    child: SizedBox(width: 40, child: Align(alignment: Alignment.centerRight, child: child)),
+  );
+}
+
+/// A slim rounded bar under an unfinished, started book's details. None at
+/// 100%, which [_forkReadStatus] shows as finished.
+Widget _forkRowProgress(ColorScheme cs, double progress) => progress >= 1.0
+    ? const SizedBox.shrink()
+    : Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(2),
+        child: LinearProgressIndicator(
+          value: progress.clamp(0.0, 1.0), minHeight: 4,
+          backgroundColor: cs.onSurface.withValues(alpha: 0.12),
+          valueColor: AlwaysStoppedAnimation(cs.primary)),
+      ),
+    );

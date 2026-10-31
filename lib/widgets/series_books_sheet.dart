@@ -1603,15 +1603,9 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
                           child: Text('$downloadPct%', style: TextStyle(color: cs.primary, fontSize: 10, fontWeight: FontWeight.w700)),
                         ),
                       ),
-                    if (progress > 0 && !isFinished)
+                    if (isDownloaded) // Fork: read status sits on the row's right
                       Positioned(left: 0, right: 0, bottom: 0,
-                        child: LinearProgressIndicator(
-                          value: progress.clamp(0.0, 1.0), minHeight: 3,
-                          backgroundColor: Colors.black38, valueColor: AlwaysStoppedAnimation(cs.primary)),
-                      ),
-                    if (isFinished || isDownloaded)
-                      Positioned(left: 0, right: 0, bottom: 0,
-                        child: CoverStateBadges(isDownloaded: isDownloaded, isFinished: isFinished, isSkimmed: isSkimmed),
+                        child: CoverStateBadges(isDownloaded: isDownloaded, isFinished: false, isSkimmed: isSkimmed),
                       ),
                   ]),
                 ),
@@ -1623,7 +1617,7 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
                         Text(l.bookNumber(sequence), style: tt.labelSmall?.copyWith(color: cs.primary, fontWeight: FontWeight.w600)),
                       Text(bookTitle, maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w600, color: cs.onSurface)),
-                      if (authorName.isNotEmpty) ...[
+                      if (authorName.isNotEmpty && _forkShowAuthor) ...[ // Fork
                         const SizedBox(height: 2),
                         Text(authorName, maxLines: 1, overflow: TextOverflow.ellipsis,
                           style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
@@ -1632,20 +1626,13 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
                         const SizedBox(height: 2),
                         Row(children: [
                           Text(formatHm(duration), style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
-                          if (progress > 0 && !isFinished) ...[
-                            const SizedBox(width: 8),
-                            Text('${(progress * 100).round()}%',
-                              style: tt.labelSmall?.copyWith(color: cs.primary, fontWeight: FontWeight.w600)),
-                          ],
                         ]),
                       ],
+                      if (progress > 0 && !isFinished) _forkRowProgress(cs, progress), // Fork
                     ]),
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
-                ),
+                _forkReadStatus(cs, tt, l, progress: progress, isFinished: isFinished, isSkimmed: isSkimmed), // Fork
               ]),
             ),
           ),

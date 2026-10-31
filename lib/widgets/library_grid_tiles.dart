@@ -30,6 +30,7 @@ class GridBookTile extends StatefulWidget {
   final double coverAspectRatio;
   final String? sequenceBadge;
   final bool showSubtitle;
+  final bool showAuthor; // Fork: series sheets leave it out
   final bool selectionMode;
   final bool selected;
   final VoidCallback? onSelectionToggle;
@@ -40,6 +41,7 @@ class GridBookTile extends StatefulWidget {
     this.coverAspectRatio = 1.0,
     this.sequenceBadge,
     this.showSubtitle = false,
+    this.showAuthor = true,
     this.selectionMode = false,
     this.selected = false,
     this.onSelectionToggle,
@@ -303,7 +305,7 @@ class _GridBookTileState extends State<GridBookTile> {
               ),
             ),
           // Author
-          if (author.isNotEmpty)
+          if (author.isNotEmpty && widget.showAuthor)
             Text(
               author,
               maxLines: 1,
