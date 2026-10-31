@@ -347,7 +347,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         ForkEditionsCard(
           key: ValueKey('fork-editions-${widget.itemId}'),
           itemId: widget.itemId, api: auth.apiService as BookOrbitApiService, accent: accent,
-          title: title, authorName: authorName, progress: progress,
+          progress: progress,
           tint: _forkSheetTint,
         ),
       if (hasAbout) ...[
@@ -475,14 +475,13 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
                 : Icon(saved ? Icons.download_done_rounded : Icons.download_rounded, color: saved ? dlGreen : null),
           );
         }),
-      // On BookOrbit, position sync: the linked editions and how they stand
-      // (the sheet BookOrbit's own sync button opens). Audiobookshelf has no
-      // links, so there it lines up the audiobook and its EPUB on the phone.
+      // On BookOrbit, position sync: how the book's own files stand (the sheet
+      // BookOrbit's own sync button opens). Audiobookshelf has no such sync,
+      // so there it lines up the audiobook and its EPUB on the phone.
       if (ForkSyncButton.shouldShow(auth, lib, widget.itemId))
         ForkSyncButton(
           key: ValueKey('fork-sync-${widget.itemId}'),
           itemId: widget.itemId, accent: accent, api: auth.apiService as BookOrbitApiService,
-          title: title, authorName: authorName,
           tint: PlayerSettings.einkMode ? null : _coverScheme?.primaryContainer,
         )
       else if (!auth.isBookOrbit && syncPair && !lib.isOffline)

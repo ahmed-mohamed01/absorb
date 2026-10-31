@@ -3,66 +3,6 @@ import 'package:absorb/services/fork/position_sync_chain.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('EditionLinkForBookWire', () {
-    test('a linked pair with members', () {
-      final w = EditionLinkForBookWire.fromJson({
-        'link': {'id': 7, 'textBookId': 1, 'audioBookId': 2, 'readAlongBookId': null, 'createdBy': 1, 'createdAt': 'x'},
-        'proposed': null,
-        'counterpart': {'id': 2, 'title': 'Anathem', 'authorName': 'Neal Stephenson', 'coverVersion': 'v1'},
-        'role': 'text',
-        'members': {
-          'text': {
-            'id': 1,
-            'title': 'Anathem',
-            'authorName': 'Neal Stephenson',
-            'coverVersion': null,
-            'progress': {'percentage': 41.4, 'updatedAt': 'x'},
-            'narrationPercentage': null,
-          },
-          'audio': {'id': 2, 'title': 'Anathem', 'authorName': null, 'coverVersion': null, 'progress': null},
-          'readAlong': null,
-        },
-        'thisBookProgress': 41,
-        'pickedProgress': 12,
-        'readAlongOutput': true,
-      });
-      expect(w.link!.id, 7);
-      expect(w.link!.textBookId, 1);
-      expect(w.link!.audioBookId, 2);
-      expect(w.link!.readAlongBookId, isNull);
-      expect(w.role, EditionLinkRole.text);
-      expect(w.counterpart!.title, 'Anathem');
-      expect(w.members!.text!.progressPercentage, 41);
-      expect(w.members!.audio.id, 2);
-      expect(w.members!.audio.progressPercentage, isNull);
-      expect(w.members!.readAlong, isNull);
-      expect(w.thisBookProgress, 41);
-      expect(w.pickedProgress, 12);
-      expect(w.readAlongOutput, isTrue);
-    });
-
-    test('an unlinked book with a proposal and no optional fields', () {
-      final w = EditionLinkForBookWire.fromJson({
-        'link': null,
-        'proposed': {'bookId': 9, 'title': 'Anathem', 'authorName': null, 'coverVersion': null, 'score': 87},
-        'counterpart': null,
-        'role': null,
-        'members': null,
-        'thisBookProgress': null,
-      });
-      expect(w.link, isNull);
-      expect(w.members, isNull);
-      expect(w.role, isNull);
-      expect(w.proposed!.bookId, 9);
-      expect(w.proposed!.score, 87);
-      expect(w.proposed!.fromBuild, isFalse);
-      expect(w.proposed!.progress, isNull);
-      expect(w.pickedProgress, isNull);
-      expect(w.readAlongOutput, isFalse);
-      expect(EditionLinkForBookWire.fromJson({'role': 'readAlong'}).role, EditionLinkRole.readAlong);
-    });
-  });
-
   group('AlignmentStatusWire', () {
     test('a bare none payload', () {
       final w = AlignmentStatusWire.fromJson({'status': 'none'});
@@ -85,7 +25,6 @@ void main() {
       expect(w.status, AlignmentStatus.ready);
       expect(w.samplesDone, 40);
       expect(w.samplesTotal, 40);
-      expect(w.anchorCount, 312);
       expect(w.builtAt, '2026-10-01T10:00:00.000Z');
       expect(w.stale, isTrue);
     });
@@ -98,72 +37,6 @@ void main() {
       expect(building.blocked, isNull);
       expect(building.started, AlignmentStatus.building);
       expect(AlignmentBuildWire.fromJson({'status': 'unavailable'}).blocked, AlignmentBlock.unavailable);
-    });
-  });
-
-  group('ReadAlongStatusWire', () {
-    test('normalises what the server sends', () {
-      final unknown = ReadAlongStatusWire.fromJson({'status': 'exploded', 'queuePosition': 3, 'remoteProgress': 2.5});
-      expect(unknown.status, ReadAlongStatus.none);
-      expect(unknown.queuePosition, isNull);
-      expect(unknown.remoteProgress, 1.0);
-      expect(unknown.remoteCopyReclaimable, isTrue);
-      expect(unknown.keepRemoteCopyByDefault, isFalse);
-
-      final queued = ReadAlongStatusWire.fromJson({'status': 'queued', 'queuePosition': 2, 'remoteProgress': -1});
-      expect(queued.status, ReadAlongStatus.queued);
-      expect(queued.queuePosition, 2);
-      expect(queued.remoteProgress, 0.0);
-      expect(ReadAlongStatusWire.fromJson({'status': 'queued', 'queuePosition': 0}).queuePosition, isNull);
-
-      final building = ReadAlongStatusWire.fromJson({
-        'status': 'building',
-        'blocked': 'previous_output_not_deletable',
-        'phase': 'wait',
-        'remoteTask': 'SYNC_CHAPTERS',
-        'remoteProgress': 0.4,
-        'outputBook': {'id': 11, 'title': 'Anathem'},
-        'targetLibraryId': 3,
-        'targetLibraryName': 'Read-alongs',
-        'remoteCopyBytes': {'epub': 2100000, 'audio': 900000000, 'readAlong': null},
-        'keepRemoteCopyByDefault': true,
-        'remoteCopyReclaimable': false,
-        'error': 'ignored unless failed',
-        'queuePosition': 4,
-      });
-      expect(building.blocked, ReadAlongBlock.previousOutputNotDeletable);
-      expect(building.phase, ReadAlongPhase.wait);
-      expect(building.remoteProgress, 0.4);
-      expect(building.outputBook!.id, 11);
-      expect(building.targetLibraryName, 'Read-alongs');
-      expect(building.epubBytes, 2100000);
-      expect(building.audioBytes, 900000000);
-      expect(building.readAlongBytes, isNull);
-      expect(building.keepRemoteCopyByDefault, isTrue);
-      expect(building.remoteCopyReclaimable, isFalse);
-      expect(building.error, isNull);
-      expect(building.queuePosition, isNull);
-
-      final failed = ReadAlongStatusWire.fromJson({'status': 'failed', 'error': 'boom', 'phase': 'nope'});
-      expect(failed.error, 'boom');
-      expect(failed.phase, isNull);
-    });
-
-    test('snake_case block reasons', () {
-      for (final entry in {
-        'not_configured': ReadAlongBlock.notConfigured,
-        'no_pair': ReadAlongBlock.noPair,
-        'source_epub_unreadable': ReadAlongBlock.sourceEpubUnreadable,
-        'no_target_library': ReadAlongBlock.noTargetLibrary,
-        'format_not_allowed': ReadAlongBlock.formatNotAllowed,
-        'busy': ReadAlongBlock.busy,
-      }.entries) {
-        expect(ReadAlongStatusWire.fromJson({'status': 'none', 'blocked': entry.key}).blocked, entry.value);
-      }
-      final build = ReadAlongBuildWire.fromJson({'status': 'queued', 'blocked': null});
-      expect(build.status, ReadAlongStatus.queued);
-      expect(build.blocked, isNull);
-      expect(ReadAlongBuildWire.fromJson({'status': 'none', 'blocked': 'no_epub'}).blocked, ReadAlongBlock.noEpub);
     });
   });
 
@@ -210,38 +83,136 @@ void main() {
     });
   });
 
-  test('book info from a detail', () {
-    final ebook = PositionSyncBookInfo.fromDetail({
-      'files': [
-        {'role': 'primary', 'format': 'EPUB'},
-        {'role': 'supplementary', 'format': 'mp3'},
-      ],
+  group('PositionSyncBookInfo', () {
+    test('groups the plain EPUB, the read-aloud EPUB and the audio tracks', () {
+      final info = PositionSyncBookInfo.fromDetail({
+        'coverVersion': 'v3',
+        'language': 'English',
+        'files': [
+          {'id': 1, 'role': 'primary', 'format': 'EPUB', 'sizeBytes': 2000000, 'filename': 'Anathem.epub'},
+          {
+            'id': 2,
+            'role': 'content',
+            'format': 'epub',
+            'sizeBytes': 9000000,
+            'filename': 'Anathem (read-aloud).epub',
+            'mediaOverlay': {'available': true},
+          },
+          {'id': 3, 'role': 'content', 'format': 'm4b', 'sizeBytes': 400, 'filename': 'Anathem - Part 1.m4b'},
+          {'id': 4, 'role': 'content', 'format': 'M4B', 'sizeBytes': 600, 'filename': 'Anathem - Part 2.m4b'},
+          {'id': 5, 'role': 'content', 'format': 'kepub', 'sizeBytes': 1},
+          {'id': 6, 'role': 'supplementary', 'format': 'mp3', 'sizeBytes': 1},
+        ],
+        'readAloudSync': {
+          'mode': 'disabled',
+          'state': 'disabled',
+          'unavailableReason': null,
+          'audioDurationSeconds': 3600,
+          'overlayDurationSeconds': 3500.5,
+        },
+      });
+      expect(info.coverVersion, 'v3');
+      expect(info.language, 'English');
+      expect(info.ebook!.fileIds, [1]);
+      expect(info.ebook!.formatName, 'EPUB e-book');
+      expect(info.ebook!.title, 'Anathem');
+      expect(info.readAlong!.fileIds, [2]);
+      expect(info.readAlong!.formatName, 'Read-aloud EPUB');
+      expect(info.audiobook!.fileIds, [3, 4]);
+      expect(info.audiobook!.sizeBytes, 1000);
+      expect(info.audiobook!.formatName, 'M4B audiobook');
+      expect(info.audiobook!.title, 'Anathem - Part', reason: 'what the track names share');
+      expect(info.readAloudSync.mode, ReadAloudSyncMode.disabled);
+      expect(info.readAloudSync.state, ReadAloudSyncState.disabled);
+      expect(info.readAloudSync.overlayDurationSeconds, 3500.5);
     });
-    expect(ebook.modality, PositionSyncModality.text);
-    expect(ebook.readAloudIssue, isNull);
-    final both = PositionSyncBookInfo.fromDetail({
-      'files': [
-        {'role': 'primary', 'format': 'm4b'},
-        {'role': 'content', 'format': 'kepub'},
-      ],
-      'readAloudSync': {
-        'state': 'unavailable',
-        'unavailableReason': 'narration_mismatch',
-        'narrationMismatch': {'narrationFile': 21, 'narrationSeconds': 2335.5, 'chapter': 8, 'chapterSeconds': 9683},
-      },
+
+    test('a book with neither, and a server without read-aloud sync', () {
+      final info = PositionSyncBookInfo.fromDetail({'files': []});
+      expect(info.ebook, isNull);
+      expect(info.readAlong, isNull);
+      expect(info.audiobook, isNull);
+      expect(info.readAloudSync.state, ReadAloudSyncState.unavailable);
+      expect(info.readAloudSync.unavailableReason, ReadAloudSyncReason.noMediaOverlayEpub);
     });
-    expect(both.modality, PositionSyncModality.both);
-    expect(both.readAloudIssue!.reason, 'narration_mismatch');
-    expect(both.readAloudIssue!.narrationFile, 21);
-    expect(both.readAloudIssue!.chapterSeconds, 9683);
-    expect(PositionSyncBookInfo.fromDetail({'files': []}).modality, PositionSyncModality.none);
-    final otherReason = PositionSyncBookInfo.fromDetail({
-      'files': [
-        {'role': 'primary', 'format': 'mp3'},
-      ],
-      'readAloudSync': {'state': 'unavailable', 'unavailableReason': 'missing_duration'},
+
+    test('snake_case sync reasons', () {
+      final sync = readAloudSyncFromJson({'mode': 'auto', 'state': 'unavailable', 'unavailableReason': 'duration_mismatch'});
+      expect(sync.mode, ReadAloudSyncMode.auto);
+      expect(sync.unavailableReason, ReadAloudSyncReason.durationMismatch);
+      expect(readAloudSyncFromJson({'unavailableReason': 'no_audio_files'}).unavailableReason, ReadAloudSyncReason.noAudioFiles);
     });
-    expect(otherReason.modality, PositionSyncModality.audio);
-    expect(otherReason.readAloudIssue, isNull);
+  });
+
+  group('read-aloud', () {
+    Map<String, dynamic> job([Map<String, dynamic> extra = const {}]) => {
+          'id': 'j1',
+          'bookId': 9,
+          'status': 'processing',
+          'stage': 'generating_emissions',
+          'progress': 42.5,
+          'queuePosition': null,
+          'errorCode': null,
+          'cancelRequested': false,
+          'cancellable': true,
+          'canManage': true,
+          'updatedAt': '2026-10-31T10:00:00.000Z',
+          'dismissedAt': null,
+          'retryableUntil': null,
+          ...extra,
+        };
+
+    test('a job', () {
+      final j = ReadAloudJobWire.fromJson(job())!;
+      expect(j.id, 'j1');
+      expect(j.bookId, 9);
+      expect(j.status, ReadAloudJobStatus.processing);
+      expect(j.stage, 'generating_emissions');
+      expect(j.progress, 42.5);
+      expect(j.running, isTrue);
+      expect(j.active, isTrue);
+      expect(ReadAloudJobWire.fromJson(job({'status': 'awaiting_review'}))!.status, ReadAloudJobStatus.awaitingReview);
+      expect(ReadAloudJobWire.fromJson(job({'status': 'completed_with_warnings'}))!.completed, isTrue);
+      expect(ReadAloudJobWire.fromJson(job({'status': 'something_new'})), isNull);
+      expect(ReadAloudJobWire.fromJson(null), isNull);
+    });
+
+    test('a capability', () {
+      final c = ReadAloudCapabilityWire.fromJson({
+        'model': 'quartznet15x5',
+        'supportedLanguages': ['en', 'de'],
+        'workerConfigured': true,
+        'workerAvailable': true,
+        'eligible': false,
+        'reason': 'too_many_audio_files',
+        'epubFiles': [
+          {'id': 1, 'filename': 'Anathem.epub', 'format': 'epub', 'sizeBytes': 1, 'durationSeconds': null},
+        ],
+        'audioFiles': [
+          {'id': 3},
+          {'id': 4},
+        ],
+        'existingReadAlongs': [
+          {'fileId': 2},
+        ],
+        'latestJob': job(),
+      });
+      expect(c.workerConfigured, isTrue);
+      expect(c.eligible, isFalse);
+      expect(c.reason, ReadAloudReason.tooManyAudioFiles);
+      expect(c.supportedLanguages, ['en', 'de']);
+      expect(c.epubFiles.single.filename, 'Anathem.epub');
+      expect(c.audioFileIds, [3, 4]);
+      expect(c.existingReadAlongs, 1);
+      expect(c.latestJob!.id, 'j1');
+      expect(ReadAloudCapabilityWire.fromJson({}).latestJob, isNull);
+    });
+
+    test('a request', () {
+      expect(
+        const ReadAloudRequest(epubFileId: 1, audioFileIds: [3, 4], language: 'en').toJson(),
+        {'epubFileId': 1, 'audioFileIds': [3, 4], 'language': 'en', 'granularity': 'sentence'},
+      );
+    });
   });
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../providers/auth_provider.dart';
@@ -11,15 +12,15 @@ import '../../services/api_service.dart';
 import '../../services/fork/position_sync_chain.dart';
 import '../../services/fork/position_sync_controller.dart';
 import '../adaptive_modal.dart';
-import '../book_detail_sheet.dart' show showBookDetailSheet;
 import '../overlay_toast.dart';
 import 'tinted_sheet.dart';
 
-// Fork-owned: the BookOrbit Position sync button in the detail icon row and
-// its sheet (the chain of linked editions, Generate read-along, Change
-// edition; tapping another edition's card opens its page). The hooks are
-// the import in book_detail_sheet.dart and the button in `_forkIconRow`.
-// See FORK_NOTES.md.
+// Fork-owned: the BookOrbit Position sync button in the detail page's top
+// bar and its sheet: the chain of the book's own files (ebook, read-aloud,
+// audiobook and its Audiobookshelf match), upstream's read-aloud generator
+// and its options, and the Audiobookshelf match search. The hooks are the
+// import in book_detail_sheet.dart and the button in the redesigned page's
+// top bar. See FORK_NOTES.md.
 
 const _green = Color(0xFF8FDCA8);
 const _amber = Color(0xFFF2C46D);
@@ -81,13 +82,12 @@ const double _railGapHalf = 18;
 // ─── Button ─────────────────────────────────────────────────
 
 /// The detail page's top-bar Position sync button. It shows nothing for a
-/// book with nothing to link.
+/// book with nothing to sync.
 class ForkSyncButton extends StatefulWidget {
   final String itemId;
   final Color accent;
   final BookOrbitApiService api;
-  final String title;
-  final String authorName;
+
   /// The cover's container colour, which tints the sheet like the page it
   /// opens over. Null keeps the plain sheet colour.
   final Color? tint;
@@ -97,8 +97,6 @@ class ForkSyncButton extends StatefulWidget {
     required this.itemId,
     required this.accent,
     required this.api,
-    required this.title,
-    required this.authorName,
     this.tint,
   });
 
@@ -117,13 +115,7 @@ class _ForkSyncButtonState extends State<ForkSyncButton> {
   @override
   void initState() {
     super.initState();
-    _c = acquirePositionSync(widget.api, widget.itemId, widget.title, widget.authorName);
-  }
-
-  @override
-  void didUpdateWidget(ForkSyncButton old) {
-    super.didUpdateWidget(old);
-    _c.describeThisBook(widget.title, widget.authorName);
+    _c = acquirePositionSync(widget.api, widget.itemId);
   }
 
   @override
@@ -143,12 +135,11 @@ class _ForkSyncButtonState extends State<ForkSyncButton> {
     );
   }
 
-  /// The same states as [_button] on a bare icon for the detail page's top
-  /// bar, drawn the way the bookmark beside it is: the sheet's swap icon,
-  /// outlined until the editions are linked, filled in the cover's accent
-  /// when they're in sync, outlined in the accent when one wants checking,
-  /// filled red when something needs attention, and in the blue build ring
-  /// while a read-along is made.
+  /// The chain's state on a bare icon, drawn the way the bookmark beside it
+  /// is: the sheet's swap icon, outlined until the files sync, filled in the
+  /// cover's accent when they're in sync, outlined in the accent when one
+  /// wants checking, filled red when something needs attention, and in the
+  /// blue build ring while an alignment or a read-aloud is made.
   Widget _barButton(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final state = _c.buttonState;
@@ -176,8 +167,8 @@ class _ForkSyncButtonState extends State<ForkSyncButton> {
 /// Takes a book's shared controller for a widget on its page and starts it
 /// loading after the frame (loading notifies, and the sheet may be
 /// listening). Release it with [PositionSyncController.release].
-PositionSyncController acquirePositionSync(BookOrbitApiService api, String itemId, String title, String authorName) {
-  final c = PositionSyncController.acquire(api, int.parse(itemId))..describeThisBook(title, authorName);
+PositionSyncController acquirePositionSync(BookOrbitApiService api, String itemId) {
+  final c = PositionSyncController.acquire(api, int.parse(itemId));
   WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(c.loadInitial()));
   return c;
 }
@@ -187,9 +178,7 @@ PositionSyncController acquirePositionSync(BookOrbitApiService api, String itemI
 /// Call the returned release when the sheet closes.
 VoidCallback? prefetchPositionSync(AuthProvider auth, LibraryProvider lib, String itemId) {
   if (!ForkSyncButton.shouldShow(auth, lib, itemId)) return null;
-  final c = PositionSyncController.acquire(auth.apiService as BookOrbitApiService, int.parse(itemId));
-  // After the frame, as the button does: loading notifies.
-  WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(c.loadInitial()));
+  final c = acquirePositionSync(auth.apiService as BookOrbitApiService, itemId);
   return () => PositionSyncController.release(c);
 }
 
@@ -213,7 +202,7 @@ Future<void> showPositionSyncSheet(BuildContext context, PositionSyncController 
   );
 }
 
-enum _Page { chain, generate, change }
+enum _Page { chain, modify, absSearch }
 
 class _PositionSyncSheet extends StatefulWidget {
   final PositionSyncController controller;
@@ -235,10 +224,14 @@ class _PositionSyncSheet extends StatefulWidget {
 class _PositionSyncSheetState extends State<_PositionSyncSheet> {
   late final PositionSyncController _c;
   _Page _page = _Page.chain;
-  SyncEdition? _changeEdition;
-  EditionLinkCandidateWire? _changePick;
   final _query = TextEditingController();
   final Set<ConnectorKey> _explained = {};
+
+  // The options page's choices, seeded from the dialog's own defaults.
+  String? _language;
+  int? _epubFileId;
+  String _granularity = 'sentence';
+  String? _modifyError;
 
   Color get _accent => widget.accent;
 
@@ -274,18 +267,14 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
 
   void _go(_Page page) => setState(() {
         _page = page;
-        if (page != _Page.change) {
-          _changeEdition = null;
-          _changePick = null;
-          _query.clear();
-        }
+        if (page != _Page.absSearch) _query.clear();
       });
 
   @override
   Widget build(BuildContext context) {
     final keyboard = MediaQuery.viewInsetsOf(context).bottom;
-    // Lifted over the keyboard while Change's search field has it; the
-    // bottom inset only counts when the keyboard isn't already covering it.
+    // Lifted over the keyboard while the search field has it; the bottom
+    // inset only counts when the keyboard isn't already covering it.
     return Padding(
       padding: EdgeInsets.only(bottom: keyboard),
       child: Container(
@@ -315,8 +304,8 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
                     children: [
                       ...switch (_page) {
                         _Page.chain => _chainPage(context),
-                        _Page.generate => _generatePage(context),
-                        _Page.change => _changePage(context),
+                        _Page.modify => _modifyPage(context),
+                        _Page.absSearch => _absSearchPage(context),
                       },
                     ],
                   ),
@@ -418,14 +407,14 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         ChainCardRow r => r.frame,
         ChainGhostRow r => r.frame,
         ChainConnectorRow r => r.frame,
-        ChainReadAlongSlotRow _ => ChainFrame.spine,
+        ChainReadAloudSlotRow _ => ChainFrame.spine,
       };
 
   Widget _row(BuildContext context, ChainRow row, {required bool inGroup}) => switch (row) {
         ChainCardRow r => _cardRow(context, r, inGroup: inGroup),
         ChainGhostRow r => _ghostRow(context, r),
         ChainConnectorRow r => _connectorRow(context, r),
-        ChainReadAlongSlotRow r => _slotRow(context, r),
+        ChainReadAloudSlotRow r => _slotRow(context, r),
       };
 
   // The edition picks the cover slot: a book with both files has an audio
@@ -434,28 +423,25 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     final cs = Theme.of(context).colorScheme;
     final tile = Container(
       color: cs.onSurface.withValues(alpha: 0.08),
-      child: Center(child: Icon(Icons.record_voice_over_rounded, size: w * 0.45, color: cs.onSurfaceVariant)),
+      child: Center(child: Icon(syncEditionIcon(edition), size: w * 0.45, color: cs.onSurfaceVariant)),
     );
     final url = switch (cover) {
       BookCover c => _c.api.getCoverUrl('${c.bookId}',
           width: 200, coverRatio: edition == SyncEdition.audiobook ? 1.0 : 0.66),
       AbsCover c => _c.api.positionSyncAbsCoverUrl(c.absLibraryItemId),
-      TileCover _ => null,
     };
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: SizedBox(
         width: w,
         height: h,
-        child: url == null
-            ? tile
-            : CachedNetworkImage(
-                imageUrl: url,
-                fit: BoxFit.cover,
-                httpHeaders: widget.coverHeaders,
-                placeholder: (_, __) => tile,
-                errorWidget: (_, __, ___) => tile,
-              ),
+        child: CachedNetworkImage(
+          imageUrl: url,
+          fit: BoxFit.cover,
+          httpHeaders: widget.coverHeaders,
+          placeholder: (_, __) => tile,
+          errorWidget: (_, __, ___) => tile,
+        ),
       ),
     );
   }
@@ -475,45 +461,26 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     ]);
   }
 
-  String? _cardSubtitle(ChainCardRow r) {
-    if (r.change == ChangeState.blocked && r.changeHint != null) return r.changeHint;
+  String? _progressLine(ChainCardRow r) {
     final p = r.progress;
     if (r.edition == SyncEdition.abs) {
       if (p == null && r.progressPending) return PositionSyncCopy.absChecking;
-      if (p != null && r.subtitle != null) return '${r.subtitle} · $p%';
-      return p != null ? PositionSyncCopy.progressListened(p) : r.subtitle;
+      return p == null ? null : PositionSyncCopy.progressListened(p);
     }
-    if (p != null) {
-      return r.edition == SyncEdition.audiobook ? PositionSyncCopy.progressListened(p) : PositionSyncCopy.progressRead(p);
-    }
-    return r.subtitle;
-  }
-
-  /// The BookOrbit book a card opens: any edition but the one this page is
-  /// already showing. The Audiobookshelf item has no page here.
-  int? _openableBookId(ChainCardRow r) {
-    final cover = r.cover;
-    if (r.isThisBook || cover is! BookCover || cover.bookId == _c.bookId) return null;
-    return cover.bookId;
-  }
-
-  // The sync sheet closes first, so the edition's page opens over the book
-  // page it came from rather than over the sheet.
-  void _closeAndOpenBook(int bookId) {
-    final nav = Navigator.of(context);
-    nav.pop();
-    showBookDetailSheet(nav.context, '$bookId');
+    if (p == null) return null;
+    return r.edition == SyncEdition.audiobook ? PositionSyncCopy.progressListened(p) : PositionSyncCopy.progressRead(p);
   }
 
   Widget _cardRow(BuildContext context, ChainCardRow r, {required bool inGroup}) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurfaceVariant;
-    final subtitle = _cardSubtitle(r);
+    final progress = _progressLine(r);
+    final subtitle = [r.subtitle, progress].nonNulls.join(' · ');
     final busy = _c.busy;
     Widget? trailing;
     if (r.confirm != null) {
       trailing = FilledButton(
-        onPressed: busy || r.confirm!.disabled ? null : () => _runAction(r.confirm!, r),
+        onPressed: busy || r.confirm!.disabled ? null : () => _runAction(r.confirm!),
         style: FilledButton.styleFrom(
           backgroundColor: _accent,
           visualDensity: VisualDensity.compact,
@@ -521,81 +488,44 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         ),
         child: Text(r.confirm!.label),
       );
-    } else if (r.rebuild != null) {
+    } else if (r.change) {
       trailing = TextButton(
-        onPressed: busy || r.rebuild!.disabled ? null : () => _runAction(r.rebuild!, r),
-        style: TextButton.styleFrom(foregroundColor: _accent),
-        child: Text(r.rebuild!.label),
-      );
-    } else if (r.change != ChangeState.none) {
-      final enabled = r.change == ChangeState.available && !busy;
-      trailing = TextButton(
-        onPressed: enabled ? () => _openChange(r.edition) : null,
+        onPressed: busy ? null : _openAbsSearch,
         style: TextButton.styleFrom(foregroundColor: _accent),
         child: Text(PositionSyncCopy.actionChange),
       );
     }
-    final openId = _openableBookId(r);
-    final card = Material(
+    return Material(
       color: cs.onSurface.withValues(alpha: 0.04),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(inGroup ? 13 : 16),
-        side: BorderSide(
-          color: r.isThisBook ? _accent.withValues(alpha: 0.55) : cs.onSurface.withValues(alpha: r.linked ? 0.1 : 0.18),
-          width: r.linked ? 1 : 1.5,
-        ),
+        side: BorderSide(color: cs.onSurface.withValues(alpha: r.linked ? 0.1 : 0.18), width: r.linked ? 1 : 1.5),
       ),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: openId == null ? null : () => _closeAndOpenBook(openId),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(children: [
-            _cover(context, r.cover, r.edition, 42, 62),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _kindLine(context, r.edition, [
-                  if (r.isThisBook) _tag(PositionSyncCopy.tagThisBook, _accent),
-                  if (r.external) _tag(PositionSyncCopy.tagExternal, muted),
-                  if (!r.linked && r.chip != null) _tag(r.chip!, muted),
-                ]),
-                const SizedBox(height: 2),
-                Text(r.title ?? PositionSyncCopy.untitled,
-                    maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 2),
-                  Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: muted)),
-                ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(children: [
+          _cover(context, r.cover, r.edition, 42, 62),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _kindLine(context, r.edition, [
+                if (r.external) _tag(PositionSyncCopy.tagExternal, muted),
+                if (!r.linked && r.chip != null) _tag(r.chip!, muted),
               ]),
-            ),
-            if (trailing != null) trailing,
-          ]),
-        ),
-      ),
-    );
-    final job = r.job;
-    if (job == null) return card;
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      card,
-      Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _stepper(context, job),
-          if (job.error != null) ...[
-            const SizedBox(height: 8),
-            Text(job.error!, style: TextStyle(fontSize: 12, color: muted)),
-          ],
-          if (job.cancel != null || job.retry != null) ...[
-            const SizedBox(height: 8),
-            Wrap(spacing: 8, children: [
-              if (job.retry != null) _pillButton(context, job.retry!, r, ChainTone.info, filled: true),
-              if (job.cancel != null) _pillButton(context, job.cancel!, r, ChainTone.destructive, filled: false),
+              const SizedBox(height: 2),
+              Text(r.title ?? PositionSyncCopy.untitled,
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              if (subtitle.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: muted)),
+              ],
             ]),
-          ],
+          ),
+          if (trailing != null) trailing,
         ]),
       ),
-    ]);
+    );
   }
 
   Widget _ghostRow(BuildContext context, ChainGhostRow r) {
@@ -617,7 +547,7 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         ),
         if (action != null)
           TextButton(
-            onPressed: _c.busy || action.disabled ? null : () => _runAction(action, r),
+            onPressed: _c.busy || action.disabled ? null : () => _runAction(action),
             style: TextButton.styleFrom(foregroundColor: _accent),
             child: Text(action.label),
           ),
@@ -678,8 +608,8 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
           ? null
           : Center(
               // Colours are pinned so a running action, which disables every
-              // switch for a moment, doesn't grey them all; only a link this
-              // reader can't change is dimmed.
+              // switch for a moment, doesn't grey them all; only a switch
+              // that can't be turned on is dimmed.
               child: Opacity(
                 opacity: toggle.disabled ? 0.5 : 1,
                 child: Switch(
@@ -711,8 +641,7 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Wrap(spacing: 8, runSpacing: 8, children: [
-            for (var i = 0; i < r.actions.length; i++)
-              _pillButton(context, r.actions[i], r, r.tone, filled: i == 0),
+            for (var i = 0; i < r.actions.length; i++) _pillButton(context, r.actions[i], r.tone, filled: i == 0),
           ]),
         ),
     ];
@@ -752,7 +681,7 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
               visualDensity: VisualDensity.compact,
               tooltip: r.cancel!.label,
               icon: Icon(Icons.close_rounded, size: 20, color: cs.error),
-              onPressed: _c.cancelling || r.cancel!.disabled ? null : () => _runAction(r.cancel!, r),
+              onPressed: _c.cancelling || r.cancel!.disabled ? null : () => _runAction(r.cancel!),
             ),
         ]),
         if (explained && r.explainer != null)
@@ -791,41 +720,48 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
             style: TextStyle(fontSize: 12, height: 1.4, color: color, fontFamily: mono ? 'monospace' : null)),
       );
 
-  Widget _ticks(BuildContext context, ({int? done, int? total}) t) {
+  Widget _bar(BuildContext context, double? value) {
     final cs = Theme.of(context).colorScheme;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(2),
+      child: LinearProgressIndicator(
+        minHeight: 3,
+        value: value,
+        color: _tone(context, ChainTone.info),
+        backgroundColor: cs.onSurface.withValues(alpha: 0.12),
+      ),
+    );
+  }
+
+  Widget _ticks(BuildContext context, ({int? done, int? total}) t) {
     final total = t.total;
     final done = t.done ?? 0;
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Row(children: [
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(
-              minHeight: 3,
-              value: total == null || total <= 0 ? null : (done / total).clamp(0.0, 1.0),
-              color: _tone(context, ChainTone.info),
-              backgroundColor: cs.onSurface.withValues(alpha: 0.12),
-            ),
-          ),
-        ),
+        Expanded(child: _bar(context, total == null || total <= 0 ? null : (done / total).clamp(0.0, 1.0))),
         if (total != null) ...[
           const SizedBox(width: 8),
-          Text('$done / $total', style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+          Text('$done / $total', style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ],
       ]),
     );
   }
 
-  Widget _pillButton(BuildContext context, ChainAction a, ChainRow row, ChainTone tone, {required bool filled}) {
+  Widget _pillButton(BuildContext context, ChainAction a, ChainTone tone, {required bool filled, bool pending = false}) {
     final color = tone == ChainTone.muted ? _accent : _tone(context, tone);
-    final isCancel = a.id == ChainActionId.cancelReadAlong ||
-        a.id == ChainActionId.cancelLinking ||
-        a.id == ChainActionId.cancelAlignment;
+    final isCancel = a.id == ChainActionId.cancelAlignment || a.id == ChainActionId.cancelReadAloud;
     final enabled = !a.disabled && (isCancel ? !_c.cancelling : !_c.busy);
-    final onPressed = enabled ? () => _runAction(a, row) : null;
+    final onPressed = enabled ? () => _runAction(a) : null;
     const shape = StadiumBorder();
     const size = Size(0, 36);
+    final label = Row(mainAxisSize: MainAxisSize.min, children: [
+      if (pending) ...[
+        SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: filled ? null : color)),
+        const SizedBox(width: 8),
+      ],
+      Text(a.label, style: const TextStyle(fontWeight: FontWeight.w600)),
+    ]);
     if (filled) {
       return FilledButton(
         onPressed: onPressed,
@@ -837,7 +773,7 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
           shape: shape,
           padding: const EdgeInsets.symmetric(horizontal: 16),
         ),
-        child: Text(a.label, style: const TextStyle(fontWeight: FontWeight.w600)),
+        child: label,
       );
     }
     return OutlinedButton(
@@ -849,64 +785,24 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         shape: shape,
         padding: const EdgeInsets.symmetric(horizontal: 16),
       ),
-      child: Text(a.label, style: const TextStyle(fontWeight: FontWeight.w600)),
+      child: label,
     );
   }
 
-  Widget _stepper(BuildContext context, ReadAlongJob job) {
-    final cs = Theme.of(context).colorScheme;
-    final blue = _tone(context, ChainTone.info);
-    final red = _tone(context, ChainTone.destructive);
-    final todo = cs.onSurface.withValues(alpha: 0.12);
-    final reports = job.stage == 1 || job.stage == 2;
-    return Row(children: [
-      for (var i = 0; i < PositionSyncCopy.stages.length; i++) ...[
-        if (i > 0) const SizedBox(width: 6),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                minHeight: 4,
-                value: i < job.stage
-                    ? 1
-                    : i > job.stage
-                        ? 0
-                        : job.failed || !reports || job.remoteProgress == null
-                            ? 1
-                            : job.remoteProgress!,
-                color: i == job.stage && job.failed ? red : blue,
-                backgroundColor: todo,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(PositionSyncCopy.stages[i],
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: i == job.stage ? FontWeight.w700 : FontWeight.w400,
-                  color: i <= job.stage ? cs.onSurface : cs.onSurfaceVariant,
-                )),
-          ]),
-        ),
-      ],
-    ]);
-  }
-
-  Widget _slotRow(BuildContext context, ChainReadAlongSlotRow r) {
+  Widget _slotRow(BuildContext context, ChainReadAloudSlotRow r) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurfaceVariant;
-    final job = r.job;
-    final percent = job == null ? null : readAlongPercent(job.stage, job.remoteProgress);
     final status = switch (r.variant) {
-      ReadAlongSlotVariant.building => _tag(PositionSyncCopy.tagGenerating, _tone(context, ChainTone.info)),
-      ReadAlongSlotVariant.queued => _tag(PositionSyncCopy.tagQueued, muted),
-      ReadAlongSlotVariant.failed => _tag(PositionSyncCopy.tagFailed, _tone(context, ChainTone.destructive)),
+      ReadAloudSlotVariant.processing => _tag(PositionSyncCopy.tagCreating, _tone(context, ChainTone.info)),
+      ReadAloudSlotVariant.queued => _tag(PositionSyncCopy.tagQueued, muted),
+      ReadAloudSlotVariant.review => _tag(PositionSyncCopy.tagReview, _tone(context, ChainTone.warning)),
+      ReadAloudSlotVariant.failed => _tag(PositionSyncCopy.tagFailed, _tone(context, ChainTone.destructive)),
       _ => null,
     };
     final action = r.action;
-    final running = r.variant == ReadAlongSlotVariant.building || r.variant == ReadAlongSlotVariant.queued;
+    final secondary = r.secondary;
+    final progress = r.progress;
+    final running = r.variant == ReadAloudSlotVariant.processing || r.variant == ReadAloudSlotVariant.queued;
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 8, 14),
       decoration: BoxDecoration(
@@ -917,18 +813,14 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         Row(children: [
           Expanded(child: _kindLine(context, SyncEdition.readAlong, [if (status != null) status])),
           if (r.cancel != null)
-            r.variant == ReadAlongSlotVariant.failed
-                ? TextButton(
-                    onPressed: _c.busy || r.cancel!.disabled ? null : () => _runAction(r.cancel!, r),
-                    style: TextButton.styleFrom(foregroundColor: muted),
-                    child: Text(r.cancel!.label),
-                  )
-                : IconButton(
-                    visualDensity: VisualDensity.compact,
-                    tooltip: r.cancel!.label,
-                    icon: Icon(Icons.close_rounded, size: 20, color: cs.error),
-                    onPressed: _c.cancelling || r.cancel!.disabled ? null : () => _runAction(r.cancel!, r),
-                  )
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: r.cancel!.label,
+              icon: r.pending == ChainActionId.cancelReadAloud
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Icon(Icons.close_rounded, size: 20, color: cs.error),
+              onPressed: r.cancel!.disabled ? null : () => _runAction(r.cancel!),
+            )
           else
             const SizedBox(height: 40),
         ]),
@@ -936,67 +828,37 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
           padding: const EdgeInsets.only(right: 6),
           child: Text.rich(
             TextSpan(text: r.note, children: [
-              if (r.variant == ReadAlongSlotVariant.building && percent != null)
+              if (progress?.percent != null)
                 TextSpan(
-                    text: ' $percent%',
+                    text: ' ${progress!.percent}%',
                     style: TextStyle(fontWeight: FontWeight.w700, color: _tone(context, ChainTone.info))),
             ]),
             style: TextStyle(fontSize: 14, height: 1.4, color: cs.onSurface.withValues(alpha: 0.85)),
           ),
         ),
-        if (job != null && r.variant == ReadAlongSlotVariant.building) ...[
-          const SizedBox(height: 12),
-          Padding(padding: const EdgeInsets.only(right: 6), child: _stepper(context, job)),
-        ],
-        if (r.error != null) ...[
-          const SizedBox(height: 6),
-          Text(r.error!, style: TextStyle(fontSize: 12, color: muted)),
+        if (progress != null) ...[
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: _bar(context, progress.percent == null ? null : progress.percent! / 100),
+          ),
         ],
         if (running) ...[
           const SizedBox(height: 10),
           Text(PositionSyncCopy.safeToClose, style: TextStyle(fontSize: 12, color: muted)),
         ],
-        if (action != null) ...[
+        if (action != null || secondary != null) ...[
           const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.only(right: 6),
-            child: _wideButton(
-              context,
-              icon: r.variant == ReadAlongSlotVariant.failed ? Icons.refresh_rounded : Icons.auto_awesome_rounded,
-              label: action.label,
-              height: 44,
-              onPressed: action.disabled || _c.busy ? null : () => _runAction(action, r),
-            ),
+            child: Wrap(spacing: 8, runSpacing: 8, children: [
+              if (action != null)
+                _pillButton(context, action, ChainTone.muted, filled: true, pending: r.pending == action.id),
+              if (secondary != null) _pillButton(context, secondary, ChainTone.muted, filled: false),
+            ]),
           ),
         ],
       ]),
-    );
-  }
-
-  Widget _wideButton(BuildContext context,
-      {IconData? icon, required String label, required double height, VoidCallback? onPressed}) {
-    final on = ThemeData.estimateBrightnessForColor(_accent) == Brightness.dark ? Colors.white : Colors.black;
-    return SizedBox(
-      height: height,
-      child: FilledButton(
-        onPressed: onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: _accent,
-          foregroundColor: on.withValues(alpha: 0.85),
-          disabledBackgroundColor: _accent.withValues(alpha: 0.4),
-          disabledForegroundColor: on.withValues(alpha: 0.4),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (icon != null) ...[Icon(icon, size: 18), const SizedBox(width: 8)],
-          Flexible(
-            child: Text(label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-          ),
-        ]),
-      ),
     );
   }
 
@@ -1007,36 +869,12 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
   void _onSwitch(ChainConnectorRow row, bool next) {
     final toggle = row.toggle;
     if (toggle == null || toggle.disabled) return;
-    if (next) {
-      final id = toggle.onAction;
-      if (id != null) _runAction(ChainAction(id, ''), row);
-      return;
-    }
-    final target = toggle.offTarget;
-    if (target == null) return;
-    if (row.state == ConnectorState.linking && target == OffTarget.pair) {
-      unawaited(_c.cancelLinking());
-      return;
-    }
-    switch (target) {
-      case OffTarget.pair:
-        unawaited(_confirmUnlink());
-      case OffTarget.readAlong:
-        unawaited(_confirm(PositionSyncCopy.detachTitle, PositionSyncCopy.detachDescription, PositionSyncCopy.stopSyncing)
-            .then((ok) => ok ? _c.detachReadAlongAction() : null));
-      case OffTarget.abs:
-        unawaited(
-            _confirm(PositionSyncCopy.pauseAbsTitle, PositionSyncCopy.pauseAbsDescription, PositionSyncCopy.stopSyncing)
-                .then((ok) => ok ? _c.absPause() : null));
-    }
+    final id = next ? toggle.onAction : toggle.offAction;
+    if (id != null) _runAction(ChainAction(id, ''));
   }
 
-  void _runAction(ChainAction a, ChainRow row) {
+  void _runAction(ChainAction a) {
     switch (a.id) {
-      case ChainActionId.linkPair:
-        unawaited(_c.linkPair());
-      case ChainActionId.cancelLinking:
-        unawaited(_c.cancelLinking());
       case ChainActionId.cancelAlignment:
         unawaited(_c.cancelAlignmentAction());
       case ChainActionId.retryAlignment:
@@ -1044,29 +882,22 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         unawaited(_c.buildAlignmentAction());
       case ChainActionId.rebuildAlignment:
         unawaited(_c.buildAlignmentAction(force: true));
-      case ChainActionId.unlinkPair:
-        unawaited(_confirmUnlink());
-      case ChainActionId.attachReadAlong:
-        unawaited(_c.attachReadAlongAction());
-      case ChainActionId.openGenerate:
-        _go(_Page.generate);
-        // An aligned Storyteller book that already covers this pair can be
-        // imported instead of rebuilt.
-        unawaited(_c.fetchExisting());
-        unawaited(_c.loadTargetLibraries());
-      case ChainActionId.cancelReadAlong:
-        unawaited(_c.cancelReadAlongAction());
-      case ChainActionId.retryReadAlong:
-        unawaited(_c.retryReadAlong());
-      case ChainActionId.rebuildReadAlong:
-        unawaited(_confirmRebuild());
+      case ChainActionId.enableReadAloudSync:
+        unawaited(_c.setReadAloudSync(true));
+      case ChainActionId.disableReadAloudSync:
+        unawaited(_c.setReadAloudSync(false));
+      case ChainActionId.createReadAloud:
+        unawaited(_create());
+      case ChainActionId.modifyReadAloud:
+        unawaited(_openModify());
+      case ChainActionId.cancelReadAloud:
+        unawaited(_c.cancelReadAloud());
+      case ChainActionId.retryReadAloud:
+        unawaited(_c.retryReadAloud());
+      case ChainActionId.reviewReadAloud:
+        unawaited(_review());
       case ChainActionId.change:
-        final edition = switch (row) {
-          ChainCardRow r => r.edition,
-          ChainGhostRow r => r.edition,
-          _ => null,
-        };
-        if (edition != null) _openChange(edition);
+        _openAbsSearch();
       case ChainActionId.retryAbs:
         unawaited(_c.absRetry());
       case ChainActionId.absPush:
@@ -1077,6 +908,10 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         unawaited(_c.absConfirmAction());
       case ChainActionId.resumeAbs:
         unawaited(_c.absResume());
+      case ChainActionId.pauseAbs:
+        unawaited(_confirm(PositionSyncCopy.pauseAbsTitle, PositionSyncCopy.pauseAbsDescription,
+                PositionSyncCopy.stopSyncing)
+            .then((ok) => ok ? _c.absPause() : null));
     }
   }
 
@@ -1096,44 +931,34 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     return ok == true && mounted;
   }
 
-  Future<void> _confirmUnlink() async {
-    if (await _confirm(PositionSyncCopy.unlinkTitle, _c.unlinkDescription, PositionSyncCopy.actionUnlink)) {
-      await _c.unlinkPair();
-    }
+  /// One tap with the dialog's defaults; the options open instead when the
+  /// book's language gives none the speech model knows.
+  Future<void> _create() async {
+    if (!await _c.createReadAloud() && mounted) await _openModify();
   }
 
-  // The dialog names the ready read-along and promises to delete it, so it
-  // goes away if a poll retires that read-along while it is open.
-  Future<void> _confirmRebuild() async {
-    final l = AppLocalizations.of(context)!;
-    final title = _c.readAlongMember?.title ?? PositionSyncCopy.readyPending;
-    var closed = false;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => ListenableBuilder(
-        listenable: _c,
-        builder: (ctx, _) {
-          if (_c.readAlong.status != ReadAlongStatus.ready && !closed) {
-            closed = true;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (ctx.mounted) Navigator.pop(ctx, false);
-            });
-          }
-          return AlertDialog(
-            title: Text(PositionSyncCopy.rebuildTitle),
-            content: Text(PositionSyncCopy.rebuildDescription(title)),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(l.cancel)),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(PositionSyncCopy.rebuildConfirm)),
-            ],
-          );
-        },
-      ),
-    );
-    if (ok == true && mounted) await _c.rebuildReadAlong();
+  /// Review lists the chapters the narration matched and adds the result to
+  /// the book; that lives in BookOrbit's web app.
+  Future<void> _review() async {
+    _toast(const PositionSyncNotice(PositionSyncNoticeKind.info, PositionSyncCopy.toastReviewInBrowser));
+    await launchUrl(Uri.parse(_c.reviewUrl), mode: LaunchMode.externalApplication);
   }
 
-  // ─── Generate page ────────────────────────────────────────
+  // ─── Read-aloud options ───────────────────────────────────
+
+  Future<void> _openModify() async {
+    final saved = await _c.api.readAloudDefaultLanguage();
+    if (!mounted) return;
+    final c = _c.capability;
+    final defaults = _c.defaultRequest(saved);
+    setState(() {
+      _language = defaults?.language;
+      _epubFileId = defaults?.epubFileId ?? (c == null || c.epubFiles.isEmpty ? null : c.epubFiles.first.id);
+      _granularity = 'sentence';
+      _modifyError = null;
+    });
+    _go(_Page.modify);
+  }
 
   Widget _pageHeader(BuildContext context, String title, String? subtitle) {
     final cs = Theme.of(context).colorScheme;
@@ -1155,23 +980,6 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
         ),
       const SizedBox(height: 14),
     ]);
-  }
-
-  Widget _miniRow(BuildContext context, IconData icon, String text, String? trailing) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: cs.onSurface.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(children: [
-        Icon(icon, size: 16, color: cs.onSurfaceVariant),
-        const SizedBox(width: 10),
-        Expanded(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13))),
-        if (trailing != null) Text(trailing, style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant)),
-      ]),
-    );
   }
 
   Widget _option(BuildContext context, IconData icon, String title, String? subtitle, Widget? trailing,
@@ -1198,62 +1006,59 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     );
   }
 
-  Future<void> _pickTargetLibrary() async {
+  Future<T?> _pick<T>(List<(T, String)> choices, T? current) {
     final cs = Theme.of(context).colorScheme;
-    final picked = await showAdaptiveActionMenu<int>(
+    return showAdaptiveActionMenu<T>(
       context: context,
       showDragHandle: true,
       backgroundColor: Theme.of(context).bottomSheetTheme.backgroundColor,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ListTile(
-            leading: Icon(Icons.settings_suggest_rounded, color: cs.onSurfaceVariant),
-            title: Text(PositionSyncCopy.targetLibraryUseConfigured),
-            trailing: _c.chosenTargetLibraryId == null ? Icon(Icons.check_rounded, color: _accent) : null,
-            onTap: () => Navigator.pop(ctx, -1),
-          ),
-          for (final lib in _c.targetLibraries)
-            ListTile(
-              leading: Icon(Icons.local_library_rounded, color: cs.onSurfaceVariant),
-              title: Text(lib.name),
-              trailing: _c.chosenTargetLibraryId == lib.id ? Icon(Icons.check_rounded, color: _accent) : null,
-              onTap: () => Navigator.pop(ctx, lib.id),
-            ),
-        ]),
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            for (final (value, label) in choices)
+              ListTile(
+                title: Text(label),
+                trailing: value == current ? Icon(Icons.check_rounded, color: _accent) : null,
+                iconColor: cs.onSurfaceVariant,
+                onTap: () => Navigator.pop(ctx, value),
+              ),
+          ]),
+        ),
       ),
     );
-    if (picked == null || !mounted) return;
-    _c.setTargetLibrary(picked == -1 ? null : picked);
   }
 
-  Future<void> _startGenerate({String? useExistingUuid}) async {
-    final outcome = await _c.generate(useExistingUuid: useExistingUuid);
+  Future<void> _startFromOptions() async {
+    final c = _c.capability;
+    final language = _language;
+    final epub = _epubFileId;
+    if (c == null || language == null || epub == null) return;
+    setState(() => _modifyError = null);
+    final error = await _c.createReadAloudWith(ReadAloudRequest(
+      epubFileId: epub,
+      audioFileIds: c.audioFileIds,
+      language: language,
+      granularity: _granularity,
+    ));
     if (!mounted) return;
-    // Only a failed request keeps the options open for a retry.
-    if (outcome != ReadAlongBuildOutcome.failed) _go(_Page.chain);
+    if (error == null) {
+      _go(_Page.chain);
+    } else {
+      setState(() => _modifyError = error);
+    }
   }
 
-  List<Widget> _generatePage(BuildContext context) {
+  List<Widget> _modifyPage(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final sides = _c.sides;
-    final ra = _c.readAlong;
-    final audio = sides.audiobook.book;
-    final ebook = sides.ebook.book;
-    final match = _c.existingMatch;
+    final c = _c.capability;
     final busy = _c.busy;
-    final chosenName = _c.chosenTargetLibraryId == null ? null : _c.targetLibraryName;
+    final epubs = c?.epubFiles ?? const <ReadAloudCandidateFileWire>[];
+    final epub = epubs.where((f) => f.id == _epubFileId).firstOrNull;
+    final languages = c?.supportedLanguages ?? const <String>[];
+    final change = TextButton.styleFrom(foregroundColor: _accent);
     return [
-      _pageHeader(context, PositionSyncCopy.generate, PositionSyncCopy.generateSubtitle),
-      if (audio != null)
-        _miniRow(context, Icons.headphones_rounded,
-            '${audio.title ?? PositionSyncCopy.untitled} · ${PositionSyncCopy.shortAudiobook}',
-            ra.audioBytes == null ? null : formatSyncBytes(ra.audioBytes!)),
-      if (audio != null && ebook != null) const SizedBox(height: 6),
-      if (ebook != null)
-        _miniRow(context, Icons.menu_book_rounded, '${ebook.title ?? PositionSyncCopy.untitled} · EPUB',
-            ra.epubBytes == null ? null : formatSyncBytes(ra.epubBytes!)),
-      const SizedBox(height: 14),
+      _pageHeader(context, PositionSyncCopy.modifyTitle, PositionSyncCopy.modifySubtitle),
       Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -1261,129 +1066,153 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
           border: Border.all(color: _accent.withValues(alpha: 0.45)),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          if (match != null)
-            _option(
-              context,
-              Icons.download_rounded,
-              PositionSyncCopy.importExisting(match.title),
-              PositionSyncCopy.importExistingHint,
-              TextButton(
-                onPressed: busy ? null : () => _startGenerate(useExistingUuid: match.uuid),
-                style: TextButton.styleFrom(foregroundColor: _accent),
-                child: Text(PositionSyncCopy.actionImport),
-              ),
-              first: true,
+          _option(
+            context,
+            Icons.translate_rounded,
+            _language == null ? PositionSyncCopy.modifyLanguage : readAloudLanguageName(_language!),
+            _language == null ? PositionSyncCopy.modifyLanguageNone : PositionSyncCopy.modifyLanguage,
+            TextButton(
+              style: change,
+              onPressed: busy || languages.isEmpty
+                  ? null
+                  : () async {
+                      final picked = await _pick([for (final l in languages) (l, readAloudLanguageName(l))], _language);
+                      if (picked != null && mounted) setState(() => _language = picked);
+                    },
+              child: Text(PositionSyncCopy.actionChange),
             ),
-          if (_c.targetLibraries.isNotEmpty)
-            _option(
-              context,
-              Icons.local_library_rounded,
-              chosenName != null
-                  ? PositionSyncCopy.targetLibraryWill(chosenName)
-                  : ra.targetLibraryName != null
-                      ? PositionSyncCopy.targetLibraryWill(ra.targetLibraryName!)
-                      : PositionSyncCopy.targetLibraryDefault,
-              chosenName == null ? PositionSyncCopy.targetLibraryConfigured : PositionSyncCopy.targetLibrary,
-              TextButton(
-                onPressed: busy ? null : _pickTargetLibrary,
-                style: TextButton.styleFrom(foregroundColor: _accent),
-                child: Text(PositionSyncCopy.actionChange),
-              ),
-              first: match == null,
+            first: true,
+          ),
+          _option(
+            context,
+            Icons.menu_book_rounded,
+            epub?.filename ?? PositionSyncCopy.untitled,
+            PositionSyncCopy.modifyEpub,
+            epubs.length > 1
+                ? TextButton(
+                    style: change,
+                    onPressed: busy
+                        ? null
+                        : () async {
+                            final picked = await _pick([for (final f in epubs) (f.id, f.filename)], _epubFileId);
+                            if (picked != null && mounted) setState(() => _epubFileId = picked);
+                          },
+                    child: Text(PositionSyncCopy.actionChange),
+                  )
+                : null,
+          ),
+          _option(context, Icons.headphones_rounded, PositionSyncCopy.modifyAudioFiles(c?.audioFileIds.length ?? 0),
+              PositionSyncCopy.modifyAudio, null),
+          _option(
+            context,
+            Icons.short_text_rounded,
+            _granularity == 'word' ? PositionSyncCopy.granularityWord : PositionSyncCopy.granularitySentence,
+            PositionSyncCopy.modifyGranularity,
+            TextButton(
+              style: change,
+              onPressed: busy
+                  ? null
+                  : () async {
+                      final picked = await _pick([
+                        ('sentence', PositionSyncCopy.granularitySentence),
+                        ('word', PositionSyncCopy.granularityWord),
+                      ], _granularity);
+                      if (picked != null && mounted) setState(() => _granularity = picked);
+                    },
+              child: Text(PositionSyncCopy.actionChange),
             ),
-          if (ra.remoteCopyReclaimable)
-            _option(
-              context,
-              Icons.cloud_queue_rounded,
-              PositionSyncCopy.keepRemoteCopy,
-              _c.keepRemoteCopy ? PositionSyncCopy.keepRemoteCopyOn : PositionSyncCopy.keepRemoteCopyOff,
-              Switch(
-                value: _c.keepRemoteCopy,
-                onChanged: busy ? null : _c.setKeepRemoteCopy,
-                activeThumbColor: _accent,
-                activeTrackColor: _accent.withValues(alpha: 0.45),
-              ),
-              first: match == null && _c.targetLibraries.isEmpty,
-            ),
+          ),
           Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 12),
-            child: Text(PositionSyncCopy.generateHint,
-                style: TextStyle(fontSize: 12, height: 1.4, color: cs.onSurfaceVariant)),
+            child: Text(PositionSyncCopy.modifyHint, style: TextStyle(fontSize: 12, height: 1.4, color: cs.onSurfaceVariant)),
           ),
+          if (_modifyError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(_modifyError!, style: TextStyle(fontSize: 13, color: cs.error)),
+            ),
           _wideButton(
             context,
             icon: Icons.auto_awesome_rounded,
-            label: PositionSyncCopy.generate,
+            label: PositionSyncCopy.createReadAloud,
             height: 48,
-            onPressed: busy ? null : () => _startGenerate(),
+            pending: _c.jobAction == ReadAloudPending.create,
+            onPressed: busy || _language == null || epub == null ? null : _startFromOptions,
           ),
         ]),
       ),
     ];
   }
 
-  // ─── Change page ──────────────────────────────────────────
-
-  void _openChange(SyncEdition edition) {
-    _go(_Page.change);
-    setState(() => _changeEdition = edition);
-    // An empty query lists the server's own proposals first.
-    if (edition == SyncEdition.abs) {
-      _c.searchAbs('');
-    } else {
-      _c.searchCandidates(edition, '');
-    }
+  Widget _wideButton(BuildContext context,
+      {IconData? icon, required String label, required double height, bool pending = false, VoidCallback? onPressed}) {
+    final on = ThemeData.estimateBrightnessForColor(_accent) == Brightness.dark ? Colors.white : Colors.black;
+    return SizedBox(
+      height: height,
+      child: FilledButton(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: _accent,
+          foregroundColor: on.withValues(alpha: 0.85),
+          disabledBackgroundColor: _accent.withValues(alpha: 0.4),
+          disabledForegroundColor: on.withValues(alpha: 0.4),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (pending)
+            ...[const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)), const SizedBox(width: 8)]
+          else if (icon != null)
+            ...[Icon(icon, size: 18), const SizedBox(width: 8)],
+          Flexible(
+            child: Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+          ),
+        ]),
+      ),
+    );
   }
 
-  void _onQuery(String q) {
-    final edition = _changeEdition;
-    if (edition == null) return;
-    setState(() => _changePick = null);
-    if (edition == SyncEdition.abs) {
-      _c.searchAbs(q);
-    } else {
-      _c.searchCandidates(edition, q);
-    }
+  // ─── Audiobookshelf match search ──────────────────────────
+
+  void _openAbsSearch() {
+    _go(_Page.absSearch);
+    // An empty query lists the unmatched items first.
+    _c.searchAbs('');
   }
 
-  Widget _resultRow(BuildContext context,
-      {required ChainCover cover,
-      required SyncEdition edition,
-      required String title,
-      required String subtitle,
-      int? score,
-      bool selected = false,
-      required VoidCallback? onTap}) {
+  Widget _resultRow(BuildContext context, AbsBookStateWire item) {
     final cs = Theme.of(context).colorScheme;
+    final sub = [item.absAuthorName, item.absLibraryName].whereType<String>().where((s) => s.isNotEmpty).join(' · ');
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: selected ? _accent.withValues(alpha: 0.08) : cs.onSurface.withValues(alpha: 0.04),
+        color: cs.onSurface.withValues(alpha: 0.04),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: selected ? _accent.withValues(alpha: 0.55) : cs.onSurface.withValues(alpha: 0.08)),
+          side: BorderSide(color: cs.onSurface.withValues(alpha: 0.08)),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: onTap,
+          onTap: _c.busy
+              ? null
+              : () async {
+                  if (await _c.absChange(item) && mounted) _go(_Page.chain);
+                },
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Row(children: [
-              _cover(context, cover, edition, 36, 54),
+              _cover(context, AbsCover(item.absLibraryItemId), SyncEdition.abs, 36, 54),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(title,
+                  Text(item.absTitle.isEmpty ? PositionSyncCopy.untitled : item.absTitle,
                       maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
-                  Text(subtitle,
-                      maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+                  Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
                 ]),
               ),
-              if (score != null) ...[
-                const SizedBox(width: 8),
-                _tag('$score%', score >= 80 ? _tone(context, ChainTone.success) : cs.onSurfaceVariant, fontSize: 12),
-              ],
             ]),
           ),
         ),
@@ -1391,82 +1220,22 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     );
   }
 
-  Future<void> _pickCandidate(SyncEdition edition, EditionLinkCandidateWire c) async {
-    if (_c.isMemberSide(edition)) {
-      setState(() => _changePick = c);
-      return;
-    }
-    _c.pick(c);
-    _go(_Page.chain);
-  }
-
-  List<Widget> _changePage(BuildContext context) {
+  List<Widget> _absSearchPage(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final edition = _changeEdition ?? SyncEdition.ebook;
-    final isAbs = edition == SyncEdition.abs;
-    final isEbook = edition == SyncEdition.ebook;
-    final pick = _changePick;
-    final results = <Widget>[];
-    if (isAbs) {
-      for (final item in _c.absCandidates) {
-        final sub = [item.absAuthorName, item.absLibraryName].whereType<String>().where((s) => s.isNotEmpty).join(' · ');
-        results.add(_resultRow(
-          context,
-          cover: AbsCover(item.absLibraryItemId),
-          edition: SyncEdition.abs,
-          title: item.absTitle.isEmpty ? PositionSyncCopy.untitled : item.absTitle,
-          subtitle: sub,
-          onTap: _c.busy
-              ? null
-              : () async {
-                  if (await _c.absChange(item) && mounted) _go(_Page.chain);
-                },
-        ));
-      }
-    } else {
-      for (final cand in _c.candidates) {
-        final kind = isEbook ? 'EPUB' : PositionSyncCopy.shortAudiobook;
-        results.add(_resultRow(
-          context,
-          cover: BookCover(cand.bookId, cand.coverVersion),
-          edition: edition,
-          title: cand.title ?? PositionSyncCopy.untitled,
-          subtitle: [if (cand.authorName != null && cand.authorName!.isNotEmpty) cand.authorName!, kind].join(' · '),
-          score: cand.fromBuild ? null : cand.score,
-          selected: pick?.bookId == cand.bookId,
-          onTap: _c.busy ? null : () => _pickCandidate(edition, cand),
-        ));
-      }
-    }
+    final results = [for (final item in _c.absCandidates) _resultRow(context, item)];
     final status = _c.searching
         ? PositionSyncCopy.searching
         : _c.searchError ?? (_c.hasSearched && results.isEmpty ? PositionSyncCopy.noMatches : null);
     return [
-      _pageHeader(
-        context,
-        isAbs
-            ? PositionSyncCopy.selectAbs
-            : isEbook
-                ? PositionSyncCopy.selectEbook
-                : PositionSyncCopy.selectAudiobook,
-        isAbs
-            ? null
-            : isEbook
-                ? PositionSyncCopy.selectEbookHint
-                : PositionSyncCopy.selectAudiobookHint,
-      ),
+      _pageHeader(context, PositionSyncCopy.selectAbs, null),
       TextField(
         controller: _query,
         autofocus: true,
-        onChanged: _onQuery,
+        onChanged: _c.searchAbs,
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
           prefixIcon: const Icon(Icons.search_rounded),
-          hintText: isAbs
-              ? PositionSyncCopy.searchAbs
-              : isEbook
-                  ? PositionSyncCopy.searchEbooks
-                  : PositionSyncCopy.searchAudiobooks,
+          hintText: PositionSyncCopy.searchAbs,
           filled: true,
           fillColor: cs.onSurface.withValues(alpha: 0.04),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
@@ -1484,26 +1253,6 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
               style: TextStyle(fontSize: 13, color: _c.searchError != null ? cs.error : cs.onSurfaceVariant)),
         ),
       ...results,
-      if (pick != null) ...[
-        Divider(height: 24, color: cs.onSurface.withValues(alpha: 0.08)),
-        Text(PositionSyncCopy.changeTitle(pick.title ?? PositionSyncCopy.untitled),
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
-        Text(PositionSyncCopy.changeDescription(isEbook ? 'ebook' : 'audiobook'),
-            style: TextStyle(fontSize: 12, height: 1.4, color: cs.onSurfaceVariant)),
-        const SizedBox(height: 12),
-        _wideButton(
-          context,
-          label: PositionSyncCopy.changeConfirm,
-          height: 48,
-          onPressed: _c.busy
-              ? null
-              : () async {
-                  _go(_Page.chain);
-                  await _c.applyChange(edition, pick);
-                },
-        ),
-      ],
     ];
   }
 }
