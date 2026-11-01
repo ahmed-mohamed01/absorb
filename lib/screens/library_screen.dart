@@ -50,6 +50,7 @@ import '../widgets/new_list_flow.dart';
 import '../services/fork/watchlist_info.dart';
 import '../widgets/fork/watchlist_sort_sheet.dart';
 import 'fork/watchlist_library_refresh.dart';
+import '../services/fork/single_book_series.dart';
 
 /// Responsive grid column count based on available width and the cover size
 /// setting; scales up on tablets/iPads.
@@ -3973,7 +3974,7 @@ class LibraryScreenState extends State<LibraryScreen>
   }
 
   List<Map<String, dynamic>> _visibleLibraryItems(LibraryProvider lib) {
-    if (_filter != LibraryFilter.subscribed) return _items;
+    if (_filter != LibraryFilter.subscribed) return forkUncollapseSingles(_items); // Fork: one-book series as books
     return _items.where((item) {
       final id = item['id'] as String?;
       return id != null && lib.isPodcastSubscribed(id);

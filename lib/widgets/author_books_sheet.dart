@@ -19,6 +19,7 @@ import 'fork/shelf_cover_frames.dart';
 import 'fork/watchlist_author_settings_sheet.dart';
 import 'fork/watchlist_series_actions.dart';
 import '../services/api_service.dart';
+import '../services/fork/single_book_series.dart';
 
 /// Show a bottom sheet with author info and books.
 void showAuthorDetailSheet(BuildContext context, {
@@ -362,8 +363,8 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
   List<dynamic> _buildCollapsedItems(List<_BookSection> sections) {
     final items = <dynamic>[];
     for (final section in sections) {
-      if (section.isStandalone) {
-        items.addAll(section.books);
+      if (section.isStandalone || forkSeriesShowsAsBook(section.books.length)) { // Fork: one-book series as books
+        forkAddSectionBooks(items, section.books, section.isStandalone ? null : section.label);
       } else {
         items.add(section); // collapsed series
       }
@@ -381,7 +382,7 @@ class _AuthorBooksSheetState extends State<AuthorBooksSheet> {
         if (item is _BookSection) {
           items.add(_collapsedSeriesTile(cs, tt, lib, item, l));
         } else if (item is Map<String, dynamic>) {
-          items.add(_dismissibleBookTile(lib, cs, item, l.standalone, l));
+          items.add(_dismissibleBookTile(lib, cs, item, forkSeriesBookLabel(item) ?? l.standalone, l)); // Fork: keeps its #N
         }
       }
     } else {

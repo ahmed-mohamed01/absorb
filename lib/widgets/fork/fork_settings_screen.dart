@@ -61,6 +61,23 @@ class _ForkSettingsScreenState extends State<ForkSettingsScreen> {
             if (mounted) setState(() {});
           },
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Text('Series', style: tt.titleSmall?.copyWith(color: cs.primary, fontWeight: FontWeight.w600)),
+        ),
+        SwitchListTile(
+          title: const Text('Show single-book series as books'),
+          subtitle: Text(
+            ForkSettings.singleBookSeriesAsBooks
+                ? 'With Collapse series on, a series of one book shows as that book in the Library and author pages'
+                : 'With Collapse series on, a series of one book shows as a series',
+            style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+          value: ForkSettings.singleBookSeriesAsBooks,
+          onChanged: (v) async {
+            await ForkSettings.setSingleBookSeriesAsBooks(v);
+            if (mounted) setState(() {});
+          },
+        ),
       ]),
     );
   }
