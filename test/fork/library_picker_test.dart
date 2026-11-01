@@ -193,4 +193,34 @@ void main() {
     await tester.pumpWidget(picker('someone-else', () => never.future));
     expect(find.text('Book requests'), findsNothing);
   });
+
+  testWidgets('offline keeps the last Book requests answer', (tester) async {
+    Widget picker(Future<bool?> Function() canRequest) => MaterialApp(
+          home: Scaffold(
+            body: ForkLibraryPicker(
+              key: UniqueKey(),
+              libraries: const [
+                {'id': 'watchlist', 'name': 'Watchlist', 'watchlist': true, 'mediaType': 'book'},
+              ],
+              title: 'Select Library',
+              isSelected: (_) => false,
+              onPick: (_, _) {},
+              requestsAccount: 'goes-offline',
+              canRequest: canRequest,
+              onRequests: () {},
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(picker(() async => true));
+    await tester.pump();
+    expect(find.text('Book requests'), findsOneWidget);
+
+    // Offline: the check cannot tell, so the row stays and is still remembered.
+    await tester.pumpWidget(picker(() async => null));
+    await tester.pump();
+    expect(find.text('Book requests'), findsOneWidget);
+    await tester.pumpWidget(picker(() => Completer<bool?>().future));
+    expect(find.text('Book requests'), findsOneWidget);
+  });
 }

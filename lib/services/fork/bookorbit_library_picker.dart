@@ -2,7 +2,8 @@ part of '../api_service.dart';
 
 // Fork-owned: what the library picker reads from BookOrbit when it opens: the
 // Book Dock summary and the Watchlist's upcoming release count, for the lines
-// under those two rows. See FORK_NOTES.md.
+// under those two rows, and whether the Book requests row shows. See
+// FORK_NOTES.md.
 
 extension ForkLibraryPickerCounts on BookOrbitApiService {
   /// BookOrbit's `/book-dock/summary` (`pending`, `working`, `ready`,
@@ -23,4 +24,12 @@ extension ForkLibraryPickerCounts on BookOrbitApiService {
   /// needs-you pill counts), or null when it cannot be read. Read each time
   /// the picker opens, so the line is current.
   Future<int?> forkWatchlistUpcoming() => _watchReleaseTotal('upcoming', 'upcoming');
+
+  /// Whether the user may request books, or null when the permissions could
+  /// not be read (offline), so the picker keeps its last answer instead of
+  /// hiding the row.
+  Future<bool?> forkCanRequestBooks() async {
+    if ((await bookRequestAccess()).canRequest) return true;
+    return _permissions == null ? null : false;
+  }
 }

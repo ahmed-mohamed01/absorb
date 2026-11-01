@@ -45,7 +45,7 @@ Widget forkLibraryPicker(
     watchlistUpcoming: api is BookOrbitApiService ? api.forkWatchlistUpcoming : null,
     requestsTitle: l.breqTitle,
     requestsAccount: '${auth.serverUrl}|${auth.userId}',
-    canRequest: api == null ? null : () async => (await api.bookRequestAccess()).canRequest,
+    canRequest: api is BookOrbitApiService ? api.forkCanRequestBooks : null,
     requestCount: api == null ? null : () async => (await api.bookRequests(limit: 1))?.total,
     onRequests: () {
       // The sheet's context goes away once it closes, so open from the navigator's.
@@ -98,8 +98,9 @@ class ForkLibraryPicker extends StatefulWidget {
   final String requestsAccount;
 
   /// Whether the user may request books; asked once when the sheet opens.
-  /// The Book requests row shows only while this is true.
-  final Future<bool> Function()? canRequest;
+  /// The Book requests row shows only while this is true. Null means it could
+  /// not be told (offline), and the last answer for the account stands.
+  final Future<bool?> Function()? canRequest;
 
   /// Reads how many requests the user has made, for the line under the Book
   /// requests row; asked once the user is known to be able to request. Null
@@ -141,7 +142,9 @@ class _ForkLibraryPickerState extends State<ForkLibraryPicker> {
     }
     final canRequest = widget.canRequest;
     if (canRequest != null && widget.onRequests != null) {
-      canRequest().then((on) {
+      canRequest().then((answer) {
+        if (answer == null) return;
+        final on = answer;
         _canRequestByAccount[widget.requestsAccount] = on;
         if (mounted && on != _requests) setState(() => _requests = on);
         if (!on) return;
