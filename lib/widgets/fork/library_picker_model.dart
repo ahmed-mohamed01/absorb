@@ -2,7 +2,7 @@
 // unit-tested in test/fork/library_picker_model_test.dart: the split into
 // libraries and BookOrbit's tools (Book Dock, Watchlist), and the line under
 // each name (book counts, the dock's files, the watchlist's authors and
-// upcoming releases). library_picker.dart draws what these return. See
+// upcoming releases, the user's book requests). library_picker.dart draws what these return. See
 // FORK_NOTES.md.
 
 /// BookOrbit's tools, which the picker lists under a divider after the
@@ -67,6 +67,13 @@ String? watchlistSubtitle(Map<String, dynamic> library, {int? upcoming}) {
     if (upcoming != null && upcoming > 0) '$upcoming upcoming',
   ];
   return parts.isEmpty ? null : parts.join(' · ');
+}
+
+/// The Book requests row's line: how many requests the user has made, or
+/// null until the count is read.
+String? bookRequestsSubtitle(int? total) {
+  if (total == null) return null;
+  return total == 0 ? 'No requests yet' : _plural(total, 'request', 'requests');
 }
 
 int? _count(Object? value) => value is num ? value.toInt() : null;

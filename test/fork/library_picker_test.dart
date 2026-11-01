@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:absorb/widgets/fork/library_icon.dart';
 import 'package:absorb/widgets/fork/library_picker.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +12,7 @@ void main() {
     addTearDown(tester.view.reset);
     Map<String, dynamic>? picked;
     bool? pickedSelected;
+    var requestsTapped = false;
     final libraries = <Map<String, dynamic>>[
       {'id': 'book-dock', 'name': 'Book Dock', 'bookDock': true, 'mediaType': 'book'},
       {'id': '1', 'name': 'Audiobooks', 'icon': 'Headphones', 'mediaType': 'book', 'bookCount': 9},
@@ -39,6 +42,10 @@ void main() {
               },
               dockSummary: () async => {'needsReview': 3, 'pending': 5, 'total': 5},
               watchlistUpcoming: () async => 4,
+              requestsAccount: 'can-request',
+              canRequest: () async => true,
+              requestCount: () async => 80,
+              onRequests: () => requestsTapped = true,
             ),
           ),
         ),
@@ -68,6 +75,13 @@ void main() {
     expect(tester.getTopLeft(find.text('Book Dock')).dy, greaterThan(divider));
     expect(tester.getTopLeft(find.text('Watchlist')).dy, greaterThan(divider));
     expect(tester.getTopLeft(find.text('Watchlist')).dy, greaterThan(tester.getTopLeft(find.text('Book Dock')).dy));
+    // Book requests sit between the Book Dock and the Watchlist.
+    final requests = tester.getTopLeft(find.text('Book requests')).dy;
+    expect(requests, greaterThan(tester.getTopLeft(find.text('Book Dock')).dy));
+    expect(requests, lessThan(tester.getTopLeft(find.text('Watchlist')).dy));
+    expect(find.text('80 requests'), findsOneWidget);
+    await tester.tap(find.text('Book requests'));
+    expect(requestsTapped, isTrue);
 
     await tester.tap(find.text('Read-along'));
     expect(picked?['id'], '2');
@@ -123,5 +137,90 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
     expect(find.byIcon(Icons.podcasts_rounded), findsOneWidget);
+  });
+
+  testWidgets('no Book requests row when the user may not request', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: ForkLibraryPicker(
+          libraries: const [
+            {'id': '1', 'name': 'Audiobooks', 'mediaType': 'book', 'bookCount': 9},
+            {'id': 'watchlist', 'name': 'Watchlist', 'watchlist': true, 'mediaType': 'book'},
+          ],
+          title: 'Select Library',
+          isSelected: (_) => false,
+          onPick: (_, _) {},
+          requestsAccount: 'cannot-request',
+          canRequest: () async => false,
+          requestCount: () async => 3,
+          onRequests: () {},
+        ),
+      ),
+    ));
+    await tester.pump();
+    expect(find.text('Book requests'), findsNothing);
+    expect(find.text('Watchlist'), findsOneWidget);
+  });
+
+  testWidgets('the Book requests row is remembered per account', (tester) async {
+    Widget picker(String account, Future<bool> Function() canRequest) => MaterialApp(
+          home: Scaffold(
+            body: ForkLibraryPicker(
+              key: UniqueKey(),
+              libraries: const [
+                {'id': 'watchlist', 'name': 'Watchlist', 'watchlist': true, 'mediaType': 'book'},
+              ],
+              title: 'Select Library',
+              isSelected: (_) => false,
+              onPick: (_, _) {},
+              requestsAccount: account,
+              canRequest: canRequest,
+              onRequests: () {},
+            ),
+          ),
+        );
+    final never = Completer<bool>();
+
+    await tester.pumpWidget(picker('remembered', () async => true));
+    await tester.pump();
+    expect(find.text('Book requests'), findsOneWidget);
+
+    // Opened again for the same account: there before the check answers.
+    await tester.pumpWidget(picker('remembered', () => never.future));
+    expect(find.text('Book requests'), findsOneWidget);
+
+    // Another account starts without it.
+    await tester.pumpWidget(picker('someone-else', () => never.future));
+    expect(find.text('Book requests'), findsNothing);
+  });
+
+  testWidgets('offline keeps the last Book requests answer', (tester) async {
+    Widget picker(Future<bool?> Function() canRequest) => MaterialApp(
+          home: Scaffold(
+            body: ForkLibraryPicker(
+              key: UniqueKey(),
+              libraries: const [
+                {'id': 'watchlist', 'name': 'Watchlist', 'watchlist': true, 'mediaType': 'book'},
+              ],
+              title: 'Select Library',
+              isSelected: (_) => false,
+              onPick: (_, _) {},
+              requestsAccount: 'goes-offline',
+              canRequest: canRequest,
+              onRequests: () {},
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(picker(() async => true));
+    await tester.pump();
+    expect(find.text('Book requests'), findsOneWidget);
+
+    // Offline: the check cannot tell, so the row stays and is still remembered.
+    await tester.pumpWidget(picker(() async => null));
+    await tester.pump();
+    expect(find.text('Book requests'), findsOneWidget);
+    await tester.pumpWidget(picker(() => Completer<bool?>().future));
+    expect(find.text('Book requests'), findsOneWidget);
   });
 }

@@ -102,4 +102,11 @@ void main() {
           'https://books.example/api/v1/custom-icons/my-star.svg');
     });
   });
+
+  test('book requests line counts the requests once read', () {
+    expect(bookRequestsSubtitle(null), isNull);
+    expect(bookRequestsSubtitle(0), 'No requests yet');
+    expect(bookRequestsSubtitle(1), '1 request');
+    expect(bookRequestsSubtitle(80), '80 requests');
+  });
 }

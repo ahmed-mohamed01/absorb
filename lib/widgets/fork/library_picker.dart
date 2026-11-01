@@ -4,7 +4,9 @@
 // row filled in the accent with a check, and BookOrbit's tools (Book Dock,
 // Watchlist) under a divider with their own lines (files to review; followed
 // authors and upcoming releases, with the needs-you pill). The Book Dock's
-// counts and the upcoming count are read when the sheet opens.
+// counts and the upcoming count are read when the sheet opens. Book requests
+// sit between the Watchlist and the Book Dock when the user may request, with
+// the count of their requests under the name.
 // library_picker_sheet.dart builds it through [forkLibraryPicker]. Plain
 // English text. See FORK_NOTES.md.
 import 'package:flutter/material.dart';
@@ -13,6 +15,7 @@ import 'package:provider/provider.dart';
 import '../../l10n/app_localizations.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/library_provider.dart';
+import '../../screens/book_requests_screen.dart';
 import '../../services/api_service.dart';
 import 'library_icon.dart';
 import 'library_picker_model.dart';
@@ -27,7 +30,8 @@ Widget forkLibraryPicker(
   LibraryProvider lib, {
   required AppLocalizations l,
 }) {
-  final api = ctx.read<AuthProvider>().apiService;
+  final auth = ctx.read<AuthProvider>();
+  final api = auth.apiService;
   return ForkLibraryPicker(
     libraries: libraries,
     title: l.selectLibrary,
@@ -39,6 +43,16 @@ Widget forkLibraryPicker(
     },
     dockSummary: api is BookOrbitApiService ? api.forkDockSummary : null,
     watchlistUpcoming: api is BookOrbitApiService ? api.forkWatchlistUpcoming : null,
+    requestsTitle: l.breqTitle,
+    requestsAccount: '${auth.serverUrl}|${auth.userId}',
+    canRequest: api is BookOrbitApiService ? api.forkCanRequestBooks : null,
+    requestCount: api == null ? null : () async => (await api.bookRequests(limit: 1))?.total,
+    onRequests: () {
+      // The sheet's context goes away once it closes, so open from the navigator's.
+      final nav = Navigator.of(ctx);
+      nav.pop();
+      BookRequestsScreen.open(nav.context, openList: true);
+    },
   );
 }
 
@@ -53,6 +67,11 @@ class ForkLibraryPicker extends StatefulWidget {
     this.fallbackName = 'Library',
     this.dockSummary,
     this.watchlistUpcoming,
+    this.requestsTitle = 'Book requests',
+    this.requestsAccount = '',
+    this.canRequest,
+    this.requestCount,
+    this.onRequests,
   });
 
   final List<Map<String, dynamic>> libraries;
@@ -71,6 +90,26 @@ class ForkLibraryPicker extends StatefulWidget {
   /// under its row; asked once when the sheet opens, only with a Watchlist row.
   final Future<int?> Function()? watchlistUpcoming;
 
+  /// The Book requests row's name.
+  final String requestsTitle;
+
+  /// Who is signed in, so the last answer of [canRequest] is remembered per
+  /// account.
+  final String requestsAccount;
+
+  /// Whether the user may request books; asked once when the sheet opens.
+  /// The Book requests row shows only while this is true. Null means it could
+  /// not be told (offline), and the last answer for the account stands.
+  final Future<bool?> Function()? canRequest;
+
+  /// Reads how many requests the user has made, for the line under the Book
+  /// requests row; asked once the user is known to be able to request. Null
+  /// when it could not be read, leaving the row without a line.
+  final Future<int?> Function()? requestCount;
+
+  /// Called when the Book requests row is tapped.
+  final VoidCallback? onRequests;
+
   @override
   State<ForkLibraryPicker> createState() => _ForkLibraryPickerState();
 }
@@ -78,6 +117,13 @@ class ForkLibraryPicker extends StatefulWidget {
 class _ForkLibraryPickerState extends State<ForkLibraryPicker> {
   Map<String, dynamic>? _dock;
   int? _upcoming;
+  // The last answer of canRequest for each account, kept between openings so
+  // the row is there from the first frame instead of pushing the Book Dock down.
+  static final _canRequestByAccount = <String, bool>{};
+  late bool _requests = _canRequestByAccount[widget.requestsAccount] == true &&
+      widget.canRequest != null &&
+      widget.onRequests != null;
+  int? _requestCount;
 
   @override
   void initState() {
@@ -94,6 +140,19 @@ class _ForkLibraryPickerState extends State<ForkLibraryPicker> {
         if (mounted && n != null) setState(() => _upcoming = n);
       });
     }
+    final canRequest = widget.canRequest;
+    if (canRequest != null && widget.onRequests != null) {
+      canRequest().then((answer) {
+        if (answer == null) return;
+        final on = answer;
+        _canRequestByAccount[widget.requestsAccount] = on;
+        if (mounted && on != _requests) setState(() => _requests = on);
+        if (!on) return;
+        widget.requestCount?.call().then((n) {
+          if (mounted && n != null) setState(() => _requestCount = n);
+        }, onError: (_) {});
+      }, onError: (_) {});
+    }
   }
 
   @override
@@ -101,6 +160,13 @@ class _ForkLibraryPickerState extends State<ForkLibraryPicker> {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final groups = libraryPickerGroups(widget.libraries);
+    // The tools keep the server's order, with Book requests slotted in
+    // between the Watchlist and the Book Dock (after the first of them).
+    final tools = <Widget>[for (final library in groups.tools) _row(context, library)];
+    if (_requests) {
+      final at = groups.tools.indexWhere((l) => l['watchlist'] == true || l['bookDock'] == true);
+      tools.insert(at < 0 ? tools.length : at + 1, _requestsRow(context));
+    }
     final bottomPad = MediaQuery.of(context).viewPadding.bottom;
     return Container(
       constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
@@ -135,13 +201,13 @@ class _ForkLibraryPickerState extends State<ForkLibraryPicker> {
               padding: EdgeInsets.fromLTRB(12, 0, 12, bottomPad + 16),
               children: [
                 for (final library in groups.libraries) _row(context, library),
-                if (groups.tools.isNotEmpty) ...[
+                if (tools.isNotEmpty) ...[
                   Padding(
                     key: const ValueKey('fork-picker-divider'),
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                     child: Divider(height: 1, thickness: 1, color: cs.outlineVariant.withValues(alpha: 0.6)),
                   ),
-                  for (final library in groups.tools) _row(context, library),
+                  ...tools,
                 ],
               ],
             ),
@@ -151,29 +217,59 @@ class _ForkLibraryPickerState extends State<ForkLibraryPicker> {
     );
   }
 
+  Widget _requestsRow(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return _tile(
+      context,
+      key: const ValueKey('fork-picker-requests'),
+      icon: Icon(Icons.playlist_add_rounded, size: 24, color: cs.primary),
+      title: Text(widget.requestsTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: bookRequestsSubtitle(_requestCount),
+      onTap: widget.onRequests!,
+    );
+  }
+
   Widget _row(BuildContext context, Map<String, dynamic> library) {
     final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
     final name = library['name'] as String? ?? widget.fallbackName;
     final selected = widget.isSelected(library);
-    final subtitle = libraryPickerSubtitle(library, dockSummary: _dock, watchlistUpcoming: _upcoming);
+    return _tile(
+      context,
+      icon: ForkLibraryIcon(library: library, size: 24, color: cs.primary),
+      title: watchlistPickerTitle(library, name) ?? Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: libraryPickerSubtitle(library, dockSummary: _dock, watchlistUpcoming: _upcoming),
+      selected: selected,
+      onTap: () => widget.onPick(library, selected),
+    );
+  }
+
+  /// One picker row: [icon], [title] with an optional [subtitle] under it,
+  /// filled in the accent with a check when [selected].
+  Widget _tile(
+    BuildContext context, {
+    Key? key,
+    required Widget icon,
+    required Widget title,
+    String? subtitle,
+    bool selected = false,
+    required VoidCallback onTap,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
     return Padding(
+      key: key,
       padding: const EdgeInsets.only(bottom: 2),
       child: Material(
         color: selected ? cs.primary.withValues(alpha: 0.12) : Colors.transparent,
         borderRadius: BorderRadius.circular(18),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => widget.onPick(library, selected),
+          onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Row(
               children: [
-                SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: Center(child: ForkLibraryIcon(library: library, size: 24, color: cs.primary)),
-                ),
+                SizedBox(width: 28, height: 28, child: Center(child: icon)),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
@@ -181,8 +277,7 @@ class _ForkLibraryPickerState extends State<ForkLibraryPicker> {
                     children: [
                       DefaultTextStyle.merge(
                         style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: cs.onSurface),
-                        child: watchlistPickerTitle(library, name) ??
-                            Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        child: title,
                       ),
                       if (subtitle != null) ...[
                         const SizedBox(height: 2),
