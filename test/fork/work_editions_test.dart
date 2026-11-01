@@ -47,15 +47,61 @@ void main() {
       expect(rows.map((r) => r.kind), [SyncEdition.audiobook, SyncEdition.readAlong]);
     });
 
-    test('nothing when the book holds one edition', () {
-      expect(workEditions(_book(ebook: null)), isEmpty);
-      expect(workEditions(_book(audiobook: null)), isEmpty);
+    test('one edition lists the other as a request', () {
+      final audioOnly = workEditions(_book(ebook: null));
+      expect(audioOnly.map((r) => r.kind), [SyncEdition.audiobook, SyncEdition.ebook]);
+      expect(audioOnly.last.gap, WorkEditionGap.request);
+      final ebookOnly = workEditions(_book(audiobook: null));
+      expect(ebookOnly.map((r) => r.kind), [SyncEdition.audiobook, SyncEdition.ebook]);
+      expect(ebookOnly.first.gap, WorkEditionGap.request);
+    });
+
+    test('a read-aloud counts as something to read', () {
+      final rows = workEditions(_book(ebook: null, audiobook: null, readAlong: _readAlong));
+      expect(rows.map((r) => (r.kind, r.gap)),
+          [(SyncEdition.audiobook, WorkEditionGap.request), (SyncEdition.readAlong, null)]);
+    });
+
+    test('nothing when the book holds no edition', () {
+      expect(workEditions(_book(ebook: null, audiobook: null)), isEmpty);
+    });
+  });
+
+  group('missingEditionRequestPayload', () {
+    test('names this book and carries its metadata', () {
+      final body = missingEditionRequestPayload({
+        'title': ' Klara and the Sun ',
+        'authors': [{'id': '1', 'name': 'Kazuo Ishiguro'}],
+        'series': [{'id': '2', 'name': 'Standalone', 'sequence': null}],
+        'isbn': '978-0-571-36487-9',
+        'publishedYear': '2021',
+        'language': 'en',
+      }, 'ebook', 42);
+      expect(body, {
+        'title': 'Klara and the Sun',
+        'mediaKind': 'ebook',
+        'authors': ['Kazuo Ishiguro'],
+        'isbn13': '9780571364879',
+        'seriesName': 'Standalone',
+        'publishedYear': 2021,
+        'language': 'en',
+        'targetBookId': 42,
+      });
+    });
+
+    test('leaves out what the book does not have', () {
+      expect(missingEditionRequestPayload({'title': 'X', 'authors': []}, 'audiobook', 7),
+          {'title': 'X', 'mediaKind': 'audiobook', 'targetBookId': 7});
     });
   });
 
   group('ForkEditionsList', () {
     Future<void> pump(WidgetTester tester, double width, double scale,
-        {VoidCallback? onOpen, bool expanded = true, VoidCallback? onToggle}) async {
+        {VoidCallback? onOpen,
+        bool expanded = true,
+        VoidCallback? onToggle,
+        SyncChainSnapshot? book,
+        EditionRequestRow Function(WorkEdition r)? request}) async {
       tester.view.physicalSize = Size(width, 900);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -67,12 +113,13 @@ void main() {
             body: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: ForkEditionsList(
-                rows: workEditions(_book()),
+                rows: workEditions(book ?? _book()),
                 audioProgress: 0.7,
                 accent: Colors.amber,
                 onOpen: onOpen ?? () {},
                 expanded: expanded,
                 onToggle: onToggle ?? () {},
+                request: request,
               ),
             ),
           ),
@@ -107,6 +154,27 @@ void main() {
       await tester.tap(find.text('Ebook'));
       await tester.tap(find.text('Create'));
       expect(opened, 2);
+    });
+
+    testWidgets('a missing ebook offers a Request pill that sends, not opens', (tester) async {
+      var opened = 0, requested = 0;
+      await pump(tester, 400, 1,
+          book: _book(ebook: null),
+          onOpen: () => opened++,
+          request: (r) => EditionRequestRow(note: 'No ebook yet', action: 'Request', onTap: () => requested++));
+      expect(tester.takeException(), isNull);
+      expect(find.text('No ebook yet'), findsOneWidget);
+      await tester.tap(find.text('Request'));
+      await tester.tap(find.text('No ebook yet'));
+      expect((requested, opened), (1, 0));
+    });
+
+    testWidgets('a request already made shows its state with no button', (tester) async {
+      await pump(tester, 320, 2,
+          book: _book(audiobook: null), request: (r) => const EditionRequestRow(note: 'Requested'));
+      expect(tester.takeException(), isNull);
+      expect(find.text('Requested'), findsOneWidget);
+      expect(find.text('Request'), findsNothing);
     });
   });
 }
