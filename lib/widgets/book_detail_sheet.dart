@@ -524,6 +524,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
             _similarLoaded = true;
             unawaited(_loadSimilar(api));
           }
+          _forkLoadSeriesBooks(api);
 
           // Fetch Audible rating
           final media = finalItem['media'] as Map<String, dynamic>? ?? {};
