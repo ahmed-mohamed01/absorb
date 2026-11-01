@@ -76,6 +76,67 @@ List<Map<String, dynamic>> forkSimilarToShow(List<Map<String, dynamic>> similar,
   ];
 }
 
+/// The other books in [series] (this book's entry in it), in reading order,
+/// as tiles the page draws: `{id, title, hasCover, sequence}`. [raw] is the
+/// series fetch (library items, or ABS's `{libraryItem, sequence}`
+/// wrappers). Never this book or another edition of it: editions share a
+/// number, so each number shows once, and a book with none once per title.
+/// Titles compare whole, since "Name: Volume 2" is a different book from
+/// "Name: Volume 1". Books with no number go last.
+List<Map<String, dynamic>> forkSeriesBooksToShow(List<dynamic> raw,
+    {required String itemId, required String title, required dynamic series}) {
+  final seriesId = series is Map ? '${series['id'] ?? ''}' : '';
+  final seriesName = _name(series);
+  String key(String sequence, String t) => sequence.isNotEmpty ? '#$sequence' : t.trim().toLowerCase();
+  final seen = {key(_sequence(series), title), key('', title)};
+  final out = <Map<String, dynamic>>[];
+  for (final r in raw) {
+    if (r is! Map) continue;
+    final item = r['libraryItem'] is Map ? r['libraryItem'] as Map : r;
+    final id = item['id'];
+    final media = item['media'] is Map ? item['media'] as Map : const {};
+    final metadata = media['metadata'] is Map ? media['metadata'] as Map : const {};
+    final bookTitle = '${metadata['title'] ?? item['title'] ?? ''}';
+    final sequence = '${r['sequence'] ?? item['sequence'] ?? _seriesSequence(metadata, seriesId, seriesName)}'.trim();
+    if (id is! String || id == itemId || !seen.add(key(sequence, bookTitle))) continue;
+    out.add({
+      'id': id,
+      'title': bookTitle,
+      'hasCover': item['hasCover'] == true || media['coverPath'] != null,
+      'sequence': sequence,
+    });
+  }
+  double order(Map<String, dynamic> b) =>
+      double.tryParse(RegExp(r'^[\d.]+').stringMatch(b['sequence'] as String) ?? '') ?? double.maxFinite;
+  // A stable sort, so books without a number keep the server's order.
+  final indexed = out.asMap().entries.toList()
+    ..sort((a, b) {
+      final c = order(a.value).compareTo(order(b.value));
+      return c != 0 ? c : a.key.compareTo(b.key);
+    });
+  return [for (final e in indexed) e.value];
+}
+
+/// A book's number in one series: its entry in `series` (a list or a single
+/// map) matched by id or name, else the joined `seriesName` ("Name #3, ...")
+/// that minified items carry. Empty when it has none.
+String _seriesSequence(Map metadata, String seriesId, String seriesName) {
+  final raw = metadata['series'];
+  final list = raw is List ? raw : raw is Map ? [raw] : const [];
+  final wanted = seriesName.trim().toLowerCase();
+  for (final s in list) {
+    if (s is! Map) continue;
+    if ((seriesId.isNotEmpty && s['id'] == seriesId) || (wanted.isNotEmpty && _name(s).toLowerCase() == wanted)) {
+      return _sequence(s);
+    }
+  }
+  for (final entry in '${metadata['seriesName'] ?? ''}'.split(',')) {
+    final m = RegExp(r'^(.+?)\s*#\s*([\d.]+)$').firstMatch(entry.trim());
+    if (m != null && m.group(1)!.trim().toLowerCase() == wanted) return m.group(2)!;
+  }
+  return '';
+}
+
 /// The book's page count, or 0 when it has none.
 int forkPageCount(Map<String, dynamic> metadata) =>
     num.tryParse('${metadata['pageCount'] ?? metadata['pages'] ?? ''}')?.toInt() ?? 0;
@@ -129,8 +190,9 @@ List<String> forkStatusOptions({required bool isBookOrbit, required bool isFinis
   );
 }
 
-/// Which tab is open: the one asked for, unless it's More like this with
-/// nothing to show (none came back, none was asked for, or offline), when the
+/// Which tab is open: the one asked for, unless it's Related (the `similar`
+/// tab: the series and similar books) with nothing to show (none came back,
+/// none was asked for, or offline), when the
 /// page opens on the chapters until the reader picks a tab themselves. Falls
 /// back to the first tab there is; '' when there are none.
 String forkSelectedTab({

@@ -92,6 +92,46 @@ void main() {
     });
   });
 
+  group('forkSeriesBooksToShow', () {
+    const series = {'id': 's', 'name': 'Ends of Magic', 'sequence': '4'};
+
+    test('orders by number, drops this book and its editions, numberless last', () {
+      final out = forkSeriesBooksToShow([
+        {'id': '3', 'media': {'metadata': {'title': 'Assassin', 'series': [
+          {'id': 'other', 'name': 'Other', 'sequence': '9'},
+          {'id': 's', 'name': 'Ends of Magic', 'sequence': '3'},
+        ]}, 'coverPath': '/c'}},
+        {'id': 'x', 'media': {'metadata': {'title': 'Side Story', 'series': {'id': 's', 'name': 'Ends of Magic'}}}},
+        {'libraryItem': {'id': '1', 'media': {'metadata': {'title': 'Antimage'}}}, 'sequence': '1'},
+        {'id': '4', 'media': {'metadata': {'title': 'Aspirant'}}},
+        // The ebook edition of this book: same number, longer title.
+        {'id': '9', 'media': {'metadata': {'title': 'Aspirant: Book 4', 'series': {'id': 's', 'sequence': '4'}}}},
+        {'id': '2', 'media': {'metadata': {'title': 'Adventurer', 'seriesName': 'Ends of Magic #2'}}},
+        {'id': '2e', 'media': {'metadata': {'title': 'Adventurer (Ebook)', 'seriesName': 'Ends of Magic #2'}}},
+      ], itemId: '4', title: 'Aspirant', series: series);
+      expect(out.map((b) => b['id']), ['1', '2', '3', 'x']);
+      expect(out.map((b) => b['sequence']), ['1', '2', '3', '']);
+      expect(out[2]['hasCover'], isTrue);
+      expect(out[0]['hasCover'], isFalse);
+    });
+
+    test('keeps books whose titles only differ after a colon', () {
+      final out = forkSeriesBooksToShow([
+        {'id': '1', 'media': {'metadata': {'title': 'The Wandering Inn: Volume 1', 'series': {'id': 'w', 'sequence': '1'}}}},
+        {'id': '3', 'media': {'metadata': {'title': 'The Wandering Inn: Volume 3', 'series': {'id': 'w', 'sequence': '3'}}}},
+      ], itemId: '2', title: 'The Wandering Inn: Volume 2', series: {'id': 'w', 'name': 'The Wandering Inn', 'sequence': '2'});
+      expect(out.map((b) => b['id']), ['1', '3']);
+    });
+
+    test('numbers sort as numbers', () {
+      final out = forkSeriesBooksToShow([
+        {'id': 'a', 'sequence': '10', 'media': {'metadata': {'title': 'Ten'}}},
+        {'id': 'b', 'sequence': '2.5', 'media': {'metadata': {'title': 'Two and a half'}}},
+      ], itemId: 'z', title: 'Other', series: series);
+      expect(out.map((b) => b['id']), ['b', 'a']);
+    });
+  });
+
   group('small values', () {
     test('page count from either key, as a string or number', () {
       expect(forkPageCount({'pageCount': 266}), 266);

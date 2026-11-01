@@ -5,8 +5,9 @@ part of '../book_detail_sheet.dart';
 // (back, download, position sync, Absorbing, more), the cover beside the
 // title, one rating line, a stat strip with the reading status in the
 // middle, the main and secondary buttons, About with the genres behind Read
-// more, then More like this / Chapters / Bookmarks as tabs. Menus open as
-// bottom sheets. book_detail_sheet.dart only calls `_forkBuildContent`.
+// more, then Related (the book's series and More like this) / Chapters /
+// Bookmarks as tabs. Menus open as bottom sheets. book_detail_sheet.dart
+// calls `_forkBuildContent`, and `_forkLoadSeriesBooks` from `_loadItem`.
 // See FORK_NOTES.md.
 
 // New text stays plain until upstream takes it (FORK_NOTES rule 4).
@@ -17,6 +18,8 @@ const _kLength = 'Length';
 const _kMarkNotFinished = 'Mark as not finished';
 const _kAllActions = 'All actions';
 const _kNoSimilar = 'No similar books found';
+const _kRelated = 'Related';
+String _kMoreIn(String series) => 'More in $series';
 const _kSimilarOffline = 'Similar books need a connection';
 const _kPreviewPlaying = 'Playing a preview';
 const _kPreviewLoading = 'Loading a preview…';
@@ -38,6 +41,11 @@ class _ForkDetailUi {
   // Once the reader picks a tab, the page stops choosing one for them.
   bool userPickedTab = false;
   bool similarFetched = false;
+  // The rest of the book's series, shown above the similar books.
+  List<Map<String, dynamic>> seriesBooks = const [];
+  bool seriesRequested = false;
+  bool seriesFetched = false;
+  String seriesName = '';
   // Which cover a book with both an audiobook and an ebook shows in front;
   // null until the reader swaps, so the page picks from their progress.
   bool? ebookFront;
@@ -98,6 +106,32 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   void _forkSimilarFetched() {
     if (!mounted) return;
     setState(() => _ui.similarFetched = true);
+  }
+
+  /// Fetches the other books in the book's main series for the More in
+  /// <series> row, called from `_loadItem` once the item is in. A reload
+  /// fetches again only if the last try found nothing, so a failed fetch
+  /// gets another go.
+  void _forkLoadSeriesBooks(ApiService api) {
+    final metadata = (_item?['media'] as Map?)?['metadata'] as Map? ?? const {};
+    final series = forkMainSeries(metadata['series'] as List<dynamic>? ?? const [])?.main;
+    final seriesId = series is Map ? series['id'] as String? : null;
+    final libraryId = _item?['libraryId'] as String?;
+    final inFlight = _ui.seriesRequested && !_ui.seriesFetched;
+    if (!api.isBookOrbit || inFlight || _ui.seriesBooks.isNotEmpty || seriesId == null || libraryId == null) return;
+    setState(() {
+      _ui.seriesRequested = true;
+      _ui.seriesFetched = false;
+      _ui.seriesName = series['name'] as String? ?? '';
+    });
+    final title = metadata['title'] as String? ?? '';
+    unawaited(api.getAllBooksBySeries(libraryId, seriesId).then((raw) {
+      if (!mounted) return;
+      setState(() {
+        _ui.seriesBooks = forkSeriesBooksToShow(raw, itemId: widget.itemId, title: title, series: series);
+        _ui.seriesFetched = true;
+      });
+    }));
   }
 
   Widget _forkBuildContent(BuildContext context, ColorScheme cs, TextTheme tt, AppLocalizations l) {
@@ -211,11 +245,15 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     final hasAbout = descRaw.isNotEmpty || genres.isNotEmpty || tags.isNotEmpty;
     final personalNote = ((_item?['bookOrbit'] as Map?)?['personalNote'] as String?)?.trim() ?? '';
     final similarReady = similar.isNotEmpty && !lib.isOffline;
+    final seriesReady = _ui.seriesBooks.isNotEmpty && !lib.isOffline;
+    final seriesLoading = _ui.seriesRequested && !_ui.seriesFetched && !lib.isOffline;
+    // The tab holds both rows, so it has something to show if either does.
+    final relatedReady = similarReady || seriesReady;
     // An audiobook always gets every tab, an empty one saying so, so the
     // switcher keeps its shape from book to book. Chapters and bookmarks
     // belong to the audio, and only BookOrbit picks similar books.
     final tabs = <(String, IconData, String)>[
-      if (auth.isBookOrbit) ('similar', Icons.auto_awesome_outlined, l.moreLikeThis),
+      if (auth.isBookOrbit) ('similar', Icons.auto_awesome_outlined, _kRelated),
       if (!isEbookOnly) ('chapters', Icons.list_rounded, l.chapters),
       if (!isEbookOnly) ('bookmarks', Icons.bookmarks_outlined, l.bookmarks),
     ];
@@ -223,9 +261,11 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
       tabs: [for (final t in tabs) t.$1],
       preferred: _ui.tab,
       userPicked: _ui.userPickedTab,
-      similarReady: similarReady,
-      similarRequested: _similarLoaded,
-      similarFetched: _ui.similarFetched,
+      similarReady: relatedReady,
+      // Related is still loading only while a fetch that was started hasn't
+      // answered; the similar books are never fetched for some books.
+      similarRequested: _similarLoaded || _ui.seriesRequested,
+      similarFetched: (!_similarLoaded || _ui.similarFetched) && (!_ui.seriesRequested || _ui.seriesFetched),
       offline: lib.isOffline,
       hasChapters: chapters.isNotEmpty,
     );
@@ -236,7 +276,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
       offline: lib.isOffline,
     );
     final emptyTab = switch (selected) {
-      'similar' => similarReady || similarLoading ? null : lib.isOffline ? _kSimilarOffline : _kNoSimilar,
+      'similar' => relatedReady || similarLoading || seriesLoading ? null : lib.isOffline ? _kSimilarOffline : _kNoSimilar,
       'chapters' => chapters.isEmpty ? l.noChaptersBook : null,
       'bookmarks' => _bookmarks.isEmpty ? l.noBookmarksYet : null,
       _ => null,
@@ -380,11 +420,6 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         const SizedBox(height: 16),
         _listeningStatsBlock(context, cs, tt, accent, title),
       ],
-      if (tabs.length == 1 && (similarReady || similarLoading)) ...[
-        const SizedBox(height: 20),
-        Text(l.moreLikeThis, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 12),
-      ],
       if (tabs.length > 1) ...[
         const SizedBox(height: 20),
         _forkTabSwitcher(cs, tt, tabs, selected),
@@ -401,33 +436,23 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
                 Text(bm.note!, maxLines: 2, overflow: TextOverflow.ellipsis, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
             ])),
           ])),
-      if (selected == 'similar' && (similarReady || similarLoading)) Builder(builder: (context) {
-        // Two lines of title at the reader's text size, so a large font
-        // doesn't overflow the tile; grey tiles of the same size hold the
-        // place while the books load, so nothing jumps when they land.
-        final labelHeight = MediaQuery.textScalerOf(context).scale(tt.labelMedium?.fontSize ?? 12) * 1.2 * 2 + 8;
-        final coverHeight = _squareCovers ? 112.0 : 168.0;
-        return SizedBox(
-          height: coverHeight + labelHeight,
-          child: similarReady
-              ? ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: similar.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 10),
-                  itemBuilder: (_, i) => _forkSimilarTile(cs, tt, lib, auth, similar[i], 112),
-                )
-              : ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: 4,
-                  separatorBuilder: (_, __) => const SizedBox(width: 10),
-                  itemBuilder: (_, __) => Align(alignment: Alignment.topCenter, child: Container(
-                    width: 112, height: coverHeight,
-                    decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(10)),
-                  )),
-                ),
-        );
-      }),
+      if (selected == 'similar') ...() {
+        final showSeries = seriesReady || seriesLoading;
+        final showSimilar = similarReady || similarLoading;
+        Widget heading(String text) => Padding(padding: const EdgeInsets.only(bottom: 12),
+            child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)));
+        return [
+          if (showSeries) ...[
+            heading(_kMoreIn(_ui.seriesName)),
+            _forkBookRow(cs, tt, lib, auth, _ui.seriesBooks, ready: seriesReady, numbered: true),
+          ],
+          if (showSimilar) ...[
+            if (showSeries) const SizedBox(height: 8),
+            heading(l.moreLikeThis),
+            _forkBookRow(cs, tt, lib, auth, similar, ready: similarReady),
+          ],
+        ];
+      }(),
       if (tabs.length > 1 && emptyTab != null)
         Padding(padding: const EdgeInsets.symmetric(vertical: 24),
             child: Center(child: Text(emptyTab, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)))),
@@ -991,7 +1016,47 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     ));
   }
 
-  Widget _forkSimilarTile(ColorScheme cs, TextTheme tt, LibraryProvider lib, AuthProvider auth, Map<String, dynamic> book, double width) {
+  /// A sideways row of book tiles. Two lines of title at the reader's text
+  /// size, so a large font doesn't overflow the tile; grey tiles of the same
+  /// size hold the place until [ready], so nothing jumps when they land.
+  /// [numbered] puts each book's series number on its cover.
+  Widget _forkBookRow(ColorScheme cs, TextTheme tt, LibraryProvider lib, AuthProvider auth, List<Map<String, dynamic>> books,
+      {required bool ready, bool numbered = false}) {
+    return Builder(builder: (context) {
+      final labelHeight = MediaQuery.textScalerOf(context).scale(tt.labelMedium?.fontSize ?? 12) * 1.2 * 2 + 8;
+      final coverHeight = _squareCovers ? 112.0 : 168.0;
+      return SizedBox(
+        height: coverHeight + labelHeight,
+        child: ready
+            ? ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: books.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (_, i) => _forkSimilarTile(cs, tt, lib, auth, books[i], 112, numbered: numbered),
+              )
+            : ListView.separated(
+                scrollDirection: Axis.horizontal,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: 4,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (_, __) => Align(alignment: Alignment.topCenter, child: Container(
+                  width: 112, height: coverHeight,
+                  decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(10)),
+                )),
+              ),
+      );
+    });
+  }
+
+  /// A small dark pill over a cover, legible on any artwork.
+  Widget _forkCoverBadge(Widget child) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(8)),
+        child: child,
+      );
+
+  Widget _forkSimilarTile(ColorScheme cs, TextTheme tt, LibraryProvider lib, AuthProvider auth, Map<String, dynamic> book, double width,
+      {bool numbered = false}) {
     final id = book['id'] as String;
     final height = _squareCovers ? width : width * 1.5;
     final url = book['hasCover'] == true ? auth.apiService?.getCoverUrl(id) : null;
@@ -1001,20 +1066,32 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
       child: GestureDetector(
         onTap: () => showBookDetailSheet(context, id),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: SizedBox(
-              width: width,
-              height: height,
-              child: url == null
-                  ? blank
-                  : CachedNetworkImage(
-                      imageUrl: url, httpHeaders: lib.mediaHeaders, fit: BoxFit.cover,
-                      placeholder: (_, __) => Container(color: cs.surfaceContainerHighest),
-                      errorWidget: (_, __, ___) => blank,
-                    ),
+          Stack(children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                width: width,
+                height: height,
+                child: url == null
+                    ? blank
+                    : CachedNetworkImage(
+                        imageUrl: url, httpHeaders: lib.mediaHeaders, fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(color: cs.surfaceContainerHighest),
+                        errorWidget: (_, __, ___) => blank,
+                      ),
+              ),
             ),
-          ),
+            if (numbered) ...[
+              // The way BookOrbit's app marks a series row: a check on books
+              // already read, the number in the corner.
+              // 100% counts as finished, as it does in the series sheet.
+              if (lib.getProgressData(id)?['isFinished'] == true || lib.getProgress(id) >= 1.0)
+                Positioned(top: 6, left: 6, child: _forkCoverBadge(const Icon(Icons.check_rounded, size: 14, color: Colors.greenAccent))),
+              if ((book['sequence'] as String? ?? '').isNotEmpty)
+                Positioned(bottom: 6, right: 6, child: _forkCoverBadge(Text('#${book['sequence']}',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)))),
+            ],
+          ]),
           const SizedBox(height: 6),
           Text(book['title'] as String? ?? '', maxLines: 2, overflow: TextOverflow.ellipsis,
               style: tt.labelMedium?.copyWith(color: cs.onSurface.withValues(alpha: 0.8), height: 1.2)),
