@@ -148,7 +148,16 @@ class _AbsorbingScreenState extends State<AbsorbingScreen> {
     final qpId = await PlayerSettings.getQueuePlaylistId();
     final qcName = await PlayerSettings.getQueueCollectionName();
     final showUpNext = await PlayerSettings.getShowUpNextLabel();
-    if (mounted) {
+    // Fork: build() calls this, so an unconditional setState rebuilt the
+    // screen, which called this again: the Absorbing tab rebuilt on every
+    // frame, hidden or not, and kept the whole app drawing.
+    final unchanged = mode == _queueMode &&
+        bm == _bookQueueMode &&
+        pm == _podcastQueueMode &&
+        qpId == _queuePlaylistId &&
+        qcName == _queueCollectionName &&
+        showUpNext == _showUpNextLabel;
+    if (mounted && !unchanged) {
       setState(() {
         _queueMode = mode;
         _bookQueueMode = bm;

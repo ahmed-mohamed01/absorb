@@ -132,7 +132,8 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
     final ImageProvider provider = url.startsWith('/')
         ? FileImage(File(url))
         : CachedNetworkImageProvider(url, headers: context.read<LibraryProvider>().mediaHeaders);
-    PaletteGenerator.fromImageProvider(provider, maximumColorCount: 16).then((palette) {
+    // A small decode: the palette runs on the UI thread over every pixel.
+    PaletteGenerator.fromImageProvider(ResizeImage(provider, width: 64), maximumColorCount: 16).then((palette) {
       final seed = accentFromCoverPalette(palette);
       if (seed == null || !mounted) return;
       setState(() => _coverScheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness));
@@ -183,20 +184,6 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
       if (mounted && v != _rectCovers) setState(() => _rectCovers = v);
     });
     _lib = context.read<LibraryProvider>();
-    _lib!.addListener(_onLibraryChanged);
-  }
-
-  @override
-  void dispose() {
-    _lib?.removeListener(_onLibraryChanged);
-    super.dispose();
-  }
-
-  void _onLibraryChanged() {
-    // Just rebuild to pick up progress/cover changes — don't re-fetch
-    if (mounted) {
-      try { setState(() {}); } catch (_) {}
-    }
   }
 
   void _scrollToUpNext() {
@@ -1413,92 +1400,89 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
         color: bg,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      child: ListenableBuilder(
-        listenable: DownloadService(),
-        builder: (context, _) => CustomScrollView(
-          controller: widget.scrollController,
-          slivers: [
-            SliverToBoxAdapter(child: header),
-            if (_books.isNotEmpty)
-              SliverToBoxAdapter(
-                child: KeyedSubtree(
-                  key: _barKey,
-                  child: sheetViewModeBar(
-                  context,
-                  gridView: _gridView,
-                  onChanged: (grid) => setState(() => _gridView = grid),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  leading: IconButton(
-                    icon: Icon(Icons.collections_bookmark_rounded, size: 20,
-                      color: _collapseSeries ? cs.primary : cs.onSurfaceVariant),
-                    visualDensity: VisualDensity.compact,
-                    tooltip: _collapseSeries ? l.seriesBooksShowAllBooks : l.seriesBooksGroupBySubSeries,
-                    onPressed: () {
-                      setState(() {
-                        _collapseSeries = !_collapseSeries;
-                        if (_collapseSeries) {
-                          _expandedSubSeries.clear();
-                          if (!_subSeriesLoaded) _loadSubSeriesData();
-                        }
-                      });
-                      PlayerSettings.setCollapseBookSeries(_collapseSeries);
-                    },
-                  ),
-                ),
-                ),
-              ),
-            if (_isLoading && _books.isEmpty)
-              fill(const CircularProgressIndicator())
-            else if (_books.isEmpty && _loadFailed)
-              fill(Column(mainAxisSize: MainAxisSize.min, children: [
-                Text(l.failedToLoad,
-                    style: tt.bodyLarge?.copyWith(color: cs.onSurfaceVariant)),
-                TextButton(
+      child: CustomScrollView(
+        controller: widget.scrollController,
+        slivers: [
+          SliverToBoxAdapter(child: header),
+          if (_books.isNotEmpty)
+            SliverToBoxAdapter(
+              child: KeyedSubtree(
+                key: _barKey,
+                child: sheetViewModeBar(
+                context,
+                gridView: _gridView,
+                onChanged: (grid) => setState(() => _gridView = grid),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                leading: IconButton(
+                  icon: Icon(Icons.collections_bookmark_rounded, size: 20,
+                    color: _collapseSeries ? cs.primary : cs.onSurfaceVariant),
+                  visualDensity: VisualDensity.compact,
+                  tooltip: _collapseSeries ? l.seriesBooksShowAllBooks : l.seriesBooksGroupBySubSeries,
                   onPressed: () {
                     setState(() {
-                      _isLoading = true;
-                      _loadFailed = false;
+                      _collapseSeries = !_collapseSeries;
+                      if (_collapseSeries) {
+                        _expandedSubSeries.clear();
+                        if (!_subSeriesLoaded) _loadSubSeriesData();
+                      }
                     });
-                    _fetchFromApi();
+                    PlayerSettings.setCollapseBookSeries(_collapseSeries);
                   },
-                  child: Text(l.retry),
-                ),
-              ]))
-            else if (_books.isEmpty)
-              fill(Text(l.noBooksFound,
-                  style: tt.bodyLarge?.copyWith(color: cs.onSurfaceVariant)))
-            else if (_collapseSeries && !_subSeriesLoaded)
-              fill(Column(mainAxisSize: MainAxisSize.min, children: [
-                const CircularProgressIndicator(strokeWidth: 2),
-                const SizedBox(height: 12),
-                Text(l.seriesBooksLoadingSubSeries, style: tt.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.4))),
-              ]))
-            else if (_collapseSeries && _gridView)
-              _buildGroupedGrid(cs, tt, lib)
-            else if (_collapseSeries)
-              _buildGroupedList(cs, tt, lib)
-            else if (_gridView)
-              SliverPadding(
-                padding: listPad,
-                sliver: SliverGrid.builder(
-                  gridDelegate: sheetBookGridDelegate(context, childAspectRatio: _forkFrames.gridCellRatio), // Fork: room for portrait covers
-                  itemCount: _books.length,
-                  itemBuilder: (context, index) => _asJumpTarget(
-                    _books[index]['id'] == _jumpTargetId,
-                    _forkGridTile(_books[index]), // Fork: each book's own shape
-                  ),
-                ),
-              )
-            else
-              SliverPadding(
-                padding: listPad,
-                sliver: SliverList.builder(
-                  itemCount: _books.length,
-                  itemBuilder: (context, index) => _buildBookCard(cs, tt, lib, _books[index]),
                 ),
               ),
-          ],
-        ),
+              ),
+            ),
+          if (_isLoading && _books.isEmpty)
+            fill(const CircularProgressIndicator())
+          else if (_books.isEmpty && _loadFailed)
+            fill(Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(l.failedToLoad,
+                  style: tt.bodyLarge?.copyWith(color: cs.onSurfaceVariant)),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _isLoading = true;
+                    _loadFailed = false;
+                  });
+                  _fetchFromApi();
+                },
+                child: Text(l.retry),
+              ),
+            ]))
+          else if (_books.isEmpty)
+            fill(Text(l.noBooksFound,
+                style: tt.bodyLarge?.copyWith(color: cs.onSurfaceVariant)))
+          else if (_collapseSeries && !_subSeriesLoaded)
+            fill(Column(mainAxisSize: MainAxisSize.min, children: [
+              const CircularProgressIndicator(strokeWidth: 2),
+              const SizedBox(height: 12),
+              Text(l.seriesBooksLoadingSubSeries, style: tt.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.4))),
+            ]))
+          else if (_collapseSeries && _gridView)
+            _buildGroupedGrid(cs, tt, lib)
+          else if (_collapseSeries)
+            _buildGroupedList(cs, tt, lib)
+          else if (_gridView)
+            SliverPadding(
+              padding: listPad,
+              sliver: SliverGrid.builder(
+                gridDelegate: sheetBookGridDelegate(context, childAspectRatio: _forkFrames.gridCellRatio), // Fork: room for portrait covers
+                itemCount: _books.length,
+                itemBuilder: (context, index) => _asJumpTarget(
+                  _books[index]['id'] == _jumpTargetId,
+                  _forkGridTile(_books[index]), // Fork: each book's own shape
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: listPad,
+              sliver: SliverList.builder(
+                itemCount: _books.length,
+                itemBuilder: (context, index) => _buildBookCard(cs, tt, lib, _books[index]),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1508,7 +1492,11 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
   // once.
   Widget _buildBookCard(ColorScheme cs, TextTheme tt, LibraryProvider lib, Map<String, dynamic> book,
           {bool jumpTarget = true}) =>
-      _asJumpTarget(jumpTarget && book['id'] == _jumpTargetId, _bookCard(cs, tt, lib, book));
+      _asJumpTarget(jumpTarget && book['id'] == _jumpTargetId, ListenableBuilder(
+        // Only the rows show download state, so only they follow downloads.
+        listenable: DownloadService(),
+        builder: (context, _) => _bookCard(cs, tt, lib, book),
+      ));
 
   Widget _bookCard(ColorScheme cs, TextTheme tt, LibraryProvider lib, Map<String, dynamic> book) {
     final l = AppLocalizations.of(context)!;
@@ -1575,6 +1563,8 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
                               : CachedNetworkImage(
                                   imageUrl: coverUrl, fit: BoxFit.cover,
                                   httpHeaders: lib.mediaHeaders,
+                                  fadeInDuration: const Duration(milliseconds: 150),
+                                  fadeOutDuration: Duration.zero,
                                   placeholder: (_, __) => _placeholder(cs),
                                   errorWidget: (_, __, ___) => _placeholder(cs)))
                           : _placeholder(cs),

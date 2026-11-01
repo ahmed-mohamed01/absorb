@@ -54,25 +54,13 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
   }
 
   /// The card's thumbnail URL on BookOrbit (already in the image cache from
-  /// the shelf), which gives the same accent as the full cover and shows at
-  /// once under the header cover while that one loads.
+  /// the shelf), which gives the same accent as the full cover.
   String? get _forkPaletteUrl {
     if (!context.read<AuthProvider>().isBookOrbit) return null;
     if ((_item?['_localCoverUrl'] as String?)?.isNotEmpty ?? false) return null;
     final coverPath = (_item?['media'] as Map?)?['coverPath'] as String?;
     if (coverPath == null || coverPath.isEmpty) return null;
     return context.read<LibraryProvider>().getCoverUrl(widget.itemId, coverRatio: _itemFrame);
-  }
-
-  Widget _forkCoverPlaceholder(LibraryProvider lib) {
-    final url = _forkPaletteUrl;
-    if (url == null) return const SizedBox();
-    return CachedNetworkImage(
-      imageUrl: url, fit: BoxFit.contain,
-      httpHeaders: lib.mediaHeaders,
-      placeholder: (_, __) => const SizedBox(),
-      errorWidget: (_, __, ___) => const SizedBox(),
-    );
   }
 
   /// A skeleton in the layout's own shape for the opens nothing is cached

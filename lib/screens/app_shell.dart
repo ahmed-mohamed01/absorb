@@ -556,7 +556,8 @@ class _AppShellState extends State<AppShell>
     }
 
     final brightness = Theme.of(context).brightness;
-    PaletteGenerator.fromImageProvider(provider, maximumColorCount: 16)
+    // A small decode: the palette runs on the UI thread over every pixel.
+    PaletteGenerator.fromImageProvider(ResizeImage(provider, width: 64), maximumColorCount: 16)
         .then((palette) {
           final seedColor = accentFromCoverPalette(palette);
           if (seedColor == null) {

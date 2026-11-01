@@ -223,6 +223,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _bookRequestsOn = false;
 
   ApiService? _inboxApi;
+  // auth.apiService builds a new ApiService on every read, so the inbox is
+  // reloaded when the server or user changes, not when the object does:
+  // comparing objects reloaded it, and rebuilt the screen, on every frame.
+  String? _inboxFor;
   bool _boNotificationsOn = false;
   int? _boUnread;
   bool? _boAchievementsOn;
@@ -1761,8 +1765,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (mounted) _loadCurrentLibraryOverrides(lib.selectedLibraryId!);
       });
     }
-    if (auth.apiService != _inboxApi) {
-      _inboxApi = auth.apiService;
+    final inboxFor = '${auth.activeServerUrl}|${auth.userId}|${auth.isSignedOut}';
+    if (inboxFor != _inboxFor) {
+      _inboxFor = inboxFor;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _loadBookOrbitInbox();
       });

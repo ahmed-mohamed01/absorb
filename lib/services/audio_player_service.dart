@@ -2734,9 +2734,20 @@ class AudioPlayerService extends ChangeNotifier {
   /// IMPORTANT: Always returns a mapped stream that checks offsets at event time.
   /// Do NOT short-circuit to raw positionStream — the caller may subscribe before
   /// track offsets are built, and would miss the offset transform forever.
+  ///
+  /// The same stream comes back for as long as the player does. A
+  /// StreamBuilder handed a new stream on each build resubscribes, the
+  /// position replays its last value at once, and that rebuild asked for the
+  /// next: the Absorbing cards kept the app drawing ~20 frames a second, even
+  /// paused and on another tab.
+  Stream<Duration>? _absolutePositionStream;
+  Object? _absolutePositionFor;
   Stream<Duration> get absolutePositionStream {
-    if (_player == null) return const Stream.empty();
-    return _player!.positionStream.map((trackRelative) {
+    final player = _player;
+    if (player == null) return const Stream.empty();
+    if (identical(player, _absolutePositionFor)) return _absolutePositionStream!;
+    _absolutePositionFor = player;
+    return _absolutePositionStream = player.positionStream.map((trackRelative) {
       if (_trackStartOffsets.length <= 1)
         return trackRelative; // single file, no offset
       final trackIdx = _currentTrackIndex;

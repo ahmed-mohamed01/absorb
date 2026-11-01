@@ -594,13 +594,21 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     final coverWidth = _squareCovers ? _ForkCoverStack.audioSide : _ForkCoverStack.ebookSize.width;
     String slotUrl(bool ebook, int width) =>
         auth.apiService!.getCoverUrl(widget.itemId, width: width, coverSlot: ebook ? 'ebook' : 'audio');
+    // The covers here are at most 140 wide, so the 400 wide thumbnail list
+    // screens already cached is sharp enough and shows at once; the full
+    // size cover is only fetched when one is opened.
+    final heroUrl = _coverUrl == null || _coverUrl!.startsWith('/')
+        ? _coverUrl
+        : lib.getCoverUrl(widget.itemId, coverRatio: _itemFrame);
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       if (dualCovers) ...[
         _ForkCoverStack(
           ebookFront: ebookFront,
           cover: (ebook) => CachedNetworkImage(
-            imageUrl: slotUrl(ebook, 800), fit: BoxFit.cover,
+            imageUrl: slotUrl(ebook, 400), fit: BoxFit.cover,
             httpHeaders: lib.mediaHeaders,
+            fadeInDuration: const Duration(milliseconds: 150),
+            fadeOutDuration: Duration.zero,
             placeholder: (_, __) => ColoredBox(color: cs.surfaceContainerHigh),
             errorWidget: (_, __, ___) => ColoredBox(
               color: cs.surfaceContainerHigh,
@@ -615,7 +623,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           title: title,
         ),
         const SizedBox(width: 16),
-      ] else if (_coverUrl != null) ...[
+      ] else if (heroUrl != null) ...[
         // Tapping the cover opens it full size; the ripple over it says so.
         Semantics(
           button: true,
@@ -629,18 +637,20 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
             ),
             clipBehavior: Clip.antiAlias,
             child: Stack(fit: StackFit.expand, children: [
-              _coverUrl!.startsWith('/')
-                  ? Image.file(File(_coverUrl!), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())
+              heroUrl.startsWith('/')
+                  ? Image.file(File(heroUrl), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const SizedBox())
                   : CachedNetworkImage(
-                      imageUrl: _coverUrl!, fit: BoxFit.cover,
+                      imageUrl: heroUrl, fit: BoxFit.cover,
                       httpHeaders: lib.mediaHeaders,
-                      placeholder: (_, __) => _forkCoverPlaceholder(lib),
+                      fadeInDuration: const Duration(milliseconds: 150),
+                      fadeOutDuration: Duration.zero,
+                      placeholder: (_, __) => ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerHigh),
                       errorWidget: (_, __, ___) => const SizedBox(),
                     ),
               Material(
                 type: MaterialType.transparency,
                 child: InkWell(
-                  onTap: () => _showFullCover(context, _fullResCoverUrl ?? _coverUrl!, lib.mediaHeaders, title),
+                  onTap: () => _showFullCover(context, _fullResCoverUrl ?? heroUrl, lib.mediaHeaders, title),
                 ),
               ),
             ]),

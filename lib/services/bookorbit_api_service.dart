@@ -2520,11 +2520,13 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   String getCoverUrl(String itemId, {int? width = 400, int? updatedAt, String? coverSlot, double? coverRatio}) {
     if (ApiService.isBookDockItem(itemId)) return _dockCoverUrl(_dockFileId(itemId));
     if (ApiService.isWatchlistItem(itemId)) return _watchCoverUrl(itemId);
-    final kind = coverSlot == null && width != null && width <= 400 ? 'thumbnail' : 'cover';
+    final kind = width != null && width <= 400 ? 'thumbnail' : 'cover';
     final cv = _coverVersions[_key(itemId)];
     final t = cv == null ? '' : '&t=${Uri.encodeQueryComponent(cv)}';
+    // A slot's thumbnail asks for it the way list screens do, so the one
+    // they cached is reused.
     final slot = coverSlot != null
-        ? '$coverSlot&strict=true'
+        ? (kind == 'thumbnail' ? coverSlot : '$coverSlot&strict=true')
         : coverRatio != null
             ? (coverRatio >= 0.99 ? 'audio' : 'ebook')
             : _listCoverSlot(itemId);
