@@ -6,7 +6,6 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:palette_generator/palette_generator.dart';
 import '../utils/cover_accent.dart';
-import '../widgets/absorbing_shared.dart';
 import '../providers/auth_provider.dart';
 import '../providers/library_provider.dart';
 import '../services/audio_player_service.dart';
@@ -935,15 +934,16 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
     if (coverUrl == null) return fallback;
 
     final isLocal = coverUrl.startsWith('/');
-    Widget image({required BoxFit fit}) {
+    Widget image({required BoxFit fit, int? decodeWidth}) {
       if (isLocal) {
-        return Image.file(File(coverUrl), fit: fit,
+        return Image.file(File(coverUrl), fit: fit, cacheWidth: decodeWidth,
             errorBuilder: (_, __, ___) => fallback);
       }
       return CachedNetworkImage(
         imageUrl: coverUrl,
         fit: fit,
         httpHeaders: headers,
+        memCacheWidth: decodeWidth,
         fadeInDuration: Duration.zero,
         fadeOutDuration: Duration.zero,
         placeholder: (_, __) => fallback,
@@ -956,13 +956,15 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
     if (widget.rectangleCovers || _bookFrame != null) return image(fit: BoxFit.cover);
 
     // Square mode: tile is 1:1. Most audiobook covers are square and fill it,
-    // but rectangular covers would letterbox - fill the gaps with a blurred
-    // copy of the cover (matches the absorbing card aesthetic). Both image()
-    // calls share the same cached bytes by URL.
-    return BlurPaddedCover(
-      blurChild: image(fit: BoxFit.cover),
-      child: image(fit: BoxFit.contain),
-    );
+    // but rectangular covers would letterbox - fill the gaps with a soft copy
+    // of the cover. As on the library grid, that copy is a tiny decode
+    // stretched to size rather than a gaussian blur, which was redrawn on
+    // every frame of a scroll along the row.
+    return Stack(fit: StackFit.expand, children: [
+      image(fit: BoxFit.cover, decodeWidth: 32),
+      Container(color: Colors.black.withValues(alpha: 0.15)),
+      image(fit: BoxFit.contain),
+    ]);
   }
 
   /// Pull a vivid accent color from the cover. Uses PaletteGenerator instead
@@ -990,7 +992,9 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
     } else {
       provider = CachedNetworkImageProvider(coverUrl, headers: widget.lib.mediaHeaders);
     }
-    PaletteGenerator.fromImageProvider(provider, maximumColorCount: 16)
+    // A small decode: the palette runs on the UI thread over every pixel, and
+    // at full size it held up the row as each card first scrolled in.
+    PaletteGenerator.fromImageProvider(ResizeImage(provider, width: 64), maximumColorCount: 16)
         .then((palette) {
           final picked = accentFromCoverPalette(palette);
           if (picked == null) return;
