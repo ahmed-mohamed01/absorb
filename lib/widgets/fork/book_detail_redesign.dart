@@ -388,6 +388,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           key: ValueKey('fork-editions-${widget.itemId}'),
           itemId: widget.itemId, api: auth.apiService as BookOrbitApiService, accent: accent,
           progress: progress,
+          title: title, author: authorName, coverUrl: _coverUrl, ebookFile: ebookFile, metadata: metadata,
           tint: _forkSheetTint,
         ),
       if (hasAbout) ...[
