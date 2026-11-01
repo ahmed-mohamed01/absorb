@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:absorb/services/api_service.dart';
+import 'package:absorb/services/fork/perf_caches.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -31,6 +32,11 @@ class _Server {
           listening = [];
           return http.Response('{}', 200, headers: {'content-type': 'application/json'});
         }
+        if (req.url.path.endsWith('/read-aloud-jobs/j1')) {
+          return http.Response(
+              jsonEncode({'id': 'j1', 'bookId': 1, 'status': 'processing', 'progress': 40}), 200,
+              headers: {'content-type': 'application/json'});
+        }
         return http.Response('{"message":"not found"}', 404);
       });
 }
@@ -60,6 +66,28 @@ void main() {
       final after = await a.getPersonalizedView(BookOrbitApiService.dashboardLibraryId, shelves: ['continue-listening'], limit: 5);
       expect(after, isEmpty);
       expect(s.hits['GET /api/v1/dashboard/scrollers/continue-listening'], 2);
+    });
+  });
+
+  group('read-aloud job polls', () {
+    test('two watchers polling one job share one request, and each answer is broadcast', () async {
+      final s = _Server();
+      final a = api(s);
+      final heard = <Map<String, dynamic>>[];
+      final sub = ForkReadAloudJobs.updates.listen(heard.add);
+      // The page's position sync, then upstream's File info panel a moment later.
+      final fork = await a.readAloudJob('j1');
+      final upstream = await a.readAlongJob('j1');
+      expect(fork?.progress, 40);
+      expect(upstream.job?.id, 'j1');
+      expect(s.hits['GET /api/v1/read-aloud-jobs/j1'], 1);
+      // The shared answer is taken once; the next poll asks again.
+      await a.readAloudJob('j1');
+      expect(s.hits['GET /api/v1/read-aloud-jobs/j1'], 2);
+      await Future<void>.delayed(Duration.zero);
+      expect(heard.length, 2);
+      expect(heard.first['bookId'], 1);
+      await sub.cancel();
     });
   });
 

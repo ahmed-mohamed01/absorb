@@ -101,7 +101,16 @@ String _mutationError(Object e, String fallback) => switch (e is PositionSyncReq
     };
 
 class PositionSyncController extends ChangeNotifier {
-  PositionSyncController._(this.api, this.bookId);
+  PositionSyncController._(this.api, this.bookId) {
+    _jobFeed = ForkReadAloudJobs.updates.listen(_onJobFeed);
+  }
+
+  /// Job statuses fetched by anyone, upstream's File info panel included.
+  StreamSubscription<Map<String, dynamic>>? _jobFeed;
+
+  /// Bumped when a finished job added a file to the book, after its detail
+  /// was read again, so the open book page reloads its item.
+  final ValueNotifier<int> filesChanged = ValueNotifier(0);
 
   static final Map<int, _Entry> _registry = {};
 
@@ -261,6 +270,8 @@ class PositionSyncController extends ChangeNotifier {
     _alTimer?.cancel();
     _jobTimer?.cancel();
     _searchTimer?.cancel();
+    _jobFeed?.cancel();
+    filesChanged.dispose();
     onNotice = null;
     super.dispose();
   }
@@ -468,6 +479,23 @@ class PositionSyncController extends ChangeNotifier {
     }
   }
 
+  /// Reads the files' positions again, after the book's progress changed
+  /// somewhere else (a reset, a status picked on the page).
+  Future<void> reloadProgress() => loaded ? _loadProgress() : Future.value();
+
+  void _onJobFeed(Map<String, dynamic> json) {
+    if (_disposed || json['bookId'] == null || '${json['bookId']}' != '$bookId') return;
+    final ReadAloudJobWire? job;
+    try {
+      job = ReadAloudJobWire.fromJson(json);
+    } catch (_) {
+      return;
+    }
+    // Upstream's panel polls only the latest job, so a job the controller
+    // didn't know is the book's newest.
+    _applyJob(job, fromUpdate: true);
+  }
+
   /// A job that finished added a read-aloud file, which changes the whole
   /// chain: the detail is read past its cache.
   Future<void> _reloadBook() async {
@@ -476,6 +504,7 @@ class PositionSyncController extends ChangeNotifier {
       if (_disposed) return;
       info = i;
       _changed();
+      filesChanged.value++;
       await _loadProgress();
     } catch (e) {
       debugPrint('[PositionSync] book reload for $bookId: $e');

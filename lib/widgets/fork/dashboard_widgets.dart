@@ -100,9 +100,30 @@ class _ForkDashboardWidgetStripState extends State<ForkDashboardWidgetStrip> wit
     _load(fresh: widget.refreshTick > 0);
   }
 
+  // The library is told about every progress, status or file change; a
+  // change that wrote to the server dropped the widget payloads with the
+  // shelves, and the strip asks again so it shows the change at once.
+  LibraryProvider? _library;
+
+  void _onLibrary() {
+    final api = context.read<AuthProvider>().apiService;
+    if (_data == null || api is! BookOrbitApiService || !api.forkWidgetsDropped) return;
+    // Fresh, so a failed fetch keeps what was showing.
+    if (_visible) {
+      _load(fresh: true);
+    } else {
+      _refetchDue = true;
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final library = context.read<LibraryProvider>();
+    if (!identical(library, _library)) {
+      _library?.removeListener(_onLibrary);
+      _library = library..addListener(_onLibrary);
+    }
     final notifier = TickerMode.getNotifier(context);
     if (!identical(notifier, _tickerMode)) {
       _tickerMode?.removeListener(_syncTimer);
@@ -114,6 +135,7 @@ class _ForkDashboardWidgetStripState extends State<ForkDashboardWidgetStrip> wit
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _library?.removeListener(_onLibrary);
     _tickerMode?.removeListener(_syncTimer);
     _player.removeListener(_onPlayer);
     _timer?.cancel();

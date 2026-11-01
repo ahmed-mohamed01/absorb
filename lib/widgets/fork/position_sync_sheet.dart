@@ -176,10 +176,11 @@ PositionSyncController acquirePositionSync(BookOrbitApiService api, String itemI
 /// Starts a book's sync state loading as its detail sheet opens, beside the
 /// book itself, so the button's status arrives with the rest of the sheet.
 /// Call the returned release when the sheet closes.
-VoidCallback? prefetchPositionSync(AuthProvider auth, LibraryProvider lib, String itemId) {
+({PositionSyncController controller, VoidCallback release})? prefetchPositionSync(
+    AuthProvider auth, LibraryProvider lib, String itemId) {
   if (!ForkSyncButton.shouldShow(auth, lib, itemId)) return null;
   final c = acquirePositionSync(auth.apiService as BookOrbitApiService, itemId);
-  return () => PositionSyncController.release(c);
+  return (controller: c, release: () => PositionSyncController.release(c));
 }
 
 // ─── Sheet ──────────────────────────────────────────────────

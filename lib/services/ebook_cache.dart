@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'api_service.dart';
+import 'fork/plain_ebook_copy.dart';
 
 /// File extension (with leading dot) for an ABS ebookFile, or '' if unknown.
 /// Prefers the explicit `ebookFormat` field over the filename extension so a
@@ -28,6 +29,14 @@ const foliateEbookFormats = {'mobi', 'azw3'};
 const comicEbookFormats = {'cbz', 'cbr', 'cb7'};
 const readableEbookFormats = {'epub', 'pdf', 'cbz', ...foliateEbookFormats};
 const allEbookFormats = {...readableEbookFormats, 'cbr', 'cb7'};
+
+/// The ebook to save to the device: the plain EPUB when a read along copy,
+/// which carries the whole audiobook inside it, is the one opened for reading.
+Map<String, dynamic>? exportEbookFile(Map<String, dynamic>? item) {
+  final media = item?['media'] as Map<String, dynamic>?;
+  final plain = (media?['readAlongEpub'] as Map?)?['plainEbookFile'];
+  return plain is Map<String, dynamic> ? plain : resolveEbookFile(item);
+}
 
 /// The ebook to use for a library item: the server's primary (media.ebookFile)
 /// when set, otherwise the best supplementary ebook from libraryFiles - epub
@@ -161,6 +170,7 @@ Future<void> deleteCachedEbookCover(String itemId) async {
 /// once an ebook is here it stays available offline.
 Future<File> ebookCacheFileFor(String itemId, Map<String, dynamic> ebookFile) async {
   final dir = await _ebookCacheDir();
+  if (forkIsPlainCopy(ebookFile)) return forkPlainCopyFile(dir, itemId, ebookExtFromFile(ebookFile));
   return File('${dir.path}/$itemId${ebookExtFromFile(ebookFile)}');
 }
 
@@ -234,6 +244,7 @@ Future<bool> cachedEbookIsCurrent(File cached, Map<String, dynamic> ebookFile) a
 
 /// Notes which server copy [cached] is, once it has been fetched.
 Future<void> rememberEbookVersion(File cached, Map<String, dynamic> ebookFile) async {
+  forkEbookCopiesChanged.value++;
   final version = ebookFileVersion(ebookFile);
   if (version == null) return;
   try {
@@ -361,6 +372,7 @@ Future<void> deleteCachedEbook(String itemId) async {
   try {
     final dir = await _ebookCacheDir();
     if (!dir.existsSync()) return;
+    await forkDeletePlainCopies(dir, itemId);
     for (final f in dir.listSync()) {
       if (f is! File) continue;
       final name = f.uri.pathSegments.last;

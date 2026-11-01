@@ -10,6 +10,7 @@ import 'auth_tokens.dart';
 import 'book_dock.dart';
 import 'book_requests.dart';
 import 'bookorbit_admin.dart';
+import 'bookorbit_email.dart';
 import 'bookorbit_match.dart';
 import 'bookorbit_mapper.dart';
 import 'media_overlay.dart';
@@ -18,6 +19,8 @@ import 'narration_stream.dart';
 import 'bookorbit_media_proxy_stub.dart'
     if (dart.library.io) 'bookorbit_media_proxy.dart';
 import 'player_settings.dart';
+import 'bookorbit_chapters.dart';
+import 'read_along_jobs.dart';
 import 'scoped_prefs.dart';
 import 'server_notifications.dart';
 import 'server_backend.dart';
@@ -38,6 +41,7 @@ part 'fork/bookorbit_position_sync.dart';
 part 'fork/bookorbit_watchlist.dart';
 part 'fork/bookorbit_perf.dart';
 part 'fork/bookorbit_library_picker.dart';
+part 'bookorbit_email_api.dart';
 
 /// Outcome of a local-session upsert. [serverTooOld] flags a 404/501 (the
 /// server predates /api/session/local) so the caller can fall back to the
@@ -802,6 +806,14 @@ class ApiService {
         _apiKeyCheckRunning = false;
       }
     }();
+  }
+
+  /// Gets a new access token now, whatever this phone makes of the old one's
+  /// age: the server said it has run out. True once a new one is in hand.
+  Future<bool> refreshAccessTokenNow() async {
+    final outcome = await _refreshAccessToken();
+    if (outcome == _RefreshOutcome.rejected) onAuthExpired?.call();
+    return outcome == _RefreshOutcome.refreshed;
   }
 
   /// Attempt to refresh the access token using the refresh token. A rejected
@@ -2920,6 +2932,8 @@ class ApiService {
         body: jsonEncode({
           'currentTime': 0,
           'progress': 0,
+          'ebookLocation': null,
+          'ebookProgress': 0,
           'isFinished': false,
           'hideFromContinueListening': true,
           'lastUpdate': DateTime.now().millisecondsSinceEpoch,
@@ -4777,10 +4791,12 @@ class ApiService {
   /// GET /api/search/chapters?asin=&region=
   /// Returns the raw result map on 200 (chapters + runtime + brand-intro/outro
   /// durations, or {error, stringKey} when the lookup fails), else null.
-  Future<Map<String, dynamic>?> searchChapters(String asin, String region) async {
+  /// [itemId] lets BookOrbit look the chapters up itself; Audiobookshelf
+  /// ignores it.
+  Future<Map<String, dynamic>?> searchChapters(String asin, String region, {String? itemId}) async {
     try {
       final uri = Uri.parse('$_cleanBaseUrl/api/search/chapters')
-          .replace(queryParameters: {'asin': asin, 'region': region});
+          .replace(queryParameters: {'asin': asin, 'region': region, 'id': ?itemId});
       final r = await _authGet(uri, timeout: const Duration(seconds: 20));
       if (r.statusCode == 200) {
         final data = jsonDecode(r.body);
@@ -4871,6 +4887,19 @@ class ApiService {
       );
       return r.statusCode;
     } catch (e) { debugPrint('deleteLibraryItem error: $e'); }
+    return 0;
+  }
+
+  /// Delete one of an item's files from the server's disk: an audio track,
+  /// the ebook or any other file in its folder. See [deletePodcastEpisode]
+  /// for status semantics.
+  Future<int> deleteLibraryFile(String itemId, String fileId) async {
+    try {
+      final r = await _authDelete(
+        Uri.parse('$_cleanBaseUrl/api/items/$itemId/file/${Uri.encodeComponent(fileId)}'),
+      );
+      return r.statusCode;
+    } catch (e) { debugPrint('deleteLibraryFile error: $e'); }
     return 0;
   }
 

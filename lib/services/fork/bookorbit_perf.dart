@@ -30,6 +30,15 @@ final MissMemo<String> _forkNoManifest = MissMemo<String>(const Duration(seconds
 final RegExp _forkManifestPath = RegExp(r'/audiobooks/(\d+)/manifest$');
 final RegExp _forkDetailPath = RegExp(r'/books/(\d+)$');
 
+/// A read-aloud job polled by two watchers at once (the page's position sync
+/// and upstream's File info panel) is asked for once: the other watcher takes
+/// that answer, once, if it is under 4 s old. Both poll every 5 s or slower,
+/// so neither ever gets an answer older than its own last one. Each answer
+/// also goes to [ForkReadAloudJobs].
+final Map<String, ({DateTime at, Future<dynamic> value})> _forkJobPolls = {};
+final RegExp _forkJobPath = RegExp(r'/read-aloud-jobs/[^/]+$');
+const _forkJobShareTtl = Duration(seconds: 4);
+
 /// Scroller cards are fetched once per type at the server's maximum and cut
 /// to each shelf's limit, under upstream's `personalized:` cache prefix so
 /// every write that drops the shelves drops them too. The flag is a plain
@@ -60,6 +69,7 @@ void _forkPerfClearCaches() {
   _forkNoManifest.clear();
   _forkItems.clear();
   _forkWarm.clear();
+  _forkJobPolls.clear();
   ForkCacheClears.run();
 }
 
@@ -75,11 +85,16 @@ extension _ForkBookOrbitPerf on BookOrbitApiService {
   Future<dynamic> _forkGetRaw(String path, Map<String, dynamic>? query, Duration timeout) {
     final uri = _boUri(path, query);
     final key = uri.toString();
+    final job = _forkJobPath.hasMatch(uri.path);
+    if (job) {
+      final shared = _forkJobPolls.remove(key);
+      if (shared != null && DateTime.now().difference(shared.at) < _forkJobShareTtl) return shared.value;
+    }
     final manifest = _forkManifestPath.hasMatch(uri.path);
     if (manifest && _forkNoManifest.contains(key)) {
       return Future.error(_BoHttpError(404, 'Book has no audiobook assets'));
     }
-    return _forkInFlight.run(key, () async {
+    final result = _forkInFlight.run(key, () async {
       final sw = _forkTraceRequests ? (Stopwatch()..start()) : null;
       try {
         // `_authGet` sends a native `/api/v1` URL straight to the base class.
@@ -95,6 +110,12 @@ extension _ForkBookOrbitPerf on BookOrbitApiService {
         if (manifest && e.status == 404) _forkNoManifest.add(key);
         rethrow;
       }
+    });
+    if (!job) return result;
+    _forkJobPolls[key] = (at: DateTime.now(), value: result);
+    return result.then((decoded) {
+      if (decoded is Map<String, dynamic>) ForkReadAloudJobs.add(decoded);
+      return decoded;
     });
   }
 

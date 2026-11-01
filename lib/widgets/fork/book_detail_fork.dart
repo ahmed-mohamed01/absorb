@@ -13,9 +13,33 @@ final _forkSyncPrefetch = Expando<VoidCallback>();
 final _forkSeeds = Expando<Map<String, dynamic>>();
 
 extension _ForkBookDetail on _BookDetailSheetContentState {
+  /// Also keeps the page and the sync state in step: a read-aloud the
+  /// controller saw finish reloads the item, and progress changed on the page
+  /// (a reset, a status) reloads the files' positions.
   void _forkPrefetchSync() {
-    final release = prefetchPositionSync(context.read<AuthProvider>(), context.read<LibraryProvider>(), widget.itemId);
-    if (release != null) _forkSyncPrefetch[this] = release;
+    final lib = context.read<LibraryProvider>();
+    final sync = prefetchPositionSync(context.read<AuthProvider>(), lib, widget.itemId);
+    if (sync == null) return;
+    final c = sync.controller;
+    void onFiles() => _filesChanged();
+    (bool, Object?) progressKey() {
+      final p = lib.getProgressData(widget.itemId);
+      return (p == null, p?['isFinished']);
+    }
+    var lastProgress = progressKey();
+    void onLibrary() {
+      final now = progressKey();
+      if (now == lastProgress) return;
+      lastProgress = now;
+      unawaited(c.reloadProgress());
+    }
+    c.filesChanged.addListener(onFiles);
+    lib.addListener(onLibrary);
+    _forkSyncPrefetch[this] = () {
+      c.filesChanged.removeListener(onFiles);
+      lib.removeListener(onLibrary);
+      sync.release();
+    };
   }
 
   void _forkReleaseSync() => _forkSyncPrefetch[this]?.call();

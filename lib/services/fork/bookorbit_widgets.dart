@@ -55,6 +55,10 @@ extension ForkDashboardWidgetsApi on BookOrbitApiService {
     }
   }
 
+  /// Whether the widget payloads are gone from the cache: a write dropped
+  /// them with the shelves (the cache keeps expired entries until then).
+  bool get forkWidgetsDropped => !BookOrbitApiService._recent.containsKey(_key(_forkWidgetsKey));
+
   /// Saves the goal while preserving freshly read Dashboard settings.
   Future<bool> forkSetReadingGoal(int goalBooks) async {
     try {

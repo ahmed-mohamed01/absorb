@@ -9,6 +9,7 @@ import '../../services/bookorbit_match.dart';
 import '../../services/download_service.dart';
 import '../../services/ebook_cache.dart';
 import '../../services/narration_service.dart';
+import '../../services/fork/plain_ebook_copy.dart';
 import '../../services/fork/position_sync_chain.dart';
 import '../../services/fork/position_sync_controller.dart';
 import '../../services/fork/work_editions.dart';
@@ -68,7 +69,9 @@ class ForkEditionsCard extends StatefulWidget {
   final String title;
   final String? author;
   final String? coverUrl;
-  final Map<String, dynamic>? ebookFile;
+
+  /// The mapped book, which the Ebook and Read-along rows' files come from.
+  final Map<String, dynamic>? item;
 
   /// This book's progress as the page shows it (0..1), fresher than the
   /// sync state's copy of the audiobook's.
@@ -91,7 +94,7 @@ class ForkEditionsCard extends StatefulWidget {
     required this.metadata,
     this.author,
     this.coverUrl,
-    this.ebookFile,
+    this.item,
     this.tint,
   });
 
@@ -243,33 +246,40 @@ class _ForkEditionsCardState extends State<ForkEditionsCard> {
     );
   }
 
-  /// The audiobook downloads as the page's own button does; the ebook as the
-  /// reader keeps it. The read-aloud EPUB has no download here yet: the
-  /// ebook cache holds one EPUB per book.
-  Widget? _download(WorkEdition r) => switch (r.kind) {
-    SyncEdition.audiobook => _compactIconButtons(
-      context,
-      DownloadWideButton(
-        itemId: widget.itemId,
-        coverUrl: widget.coverUrl,
-        title: widget.title,
-        author: widget.author,
-        accent: widget.accent,
-        iconOnly: true,
-      ),
-    ),
-    SyncEdition.ebook when widget.ebookFile != null => _compactIconButtons(
+  /// The audiobook downloads as the page's own button does. The Ebook row
+  /// keeps the plain ebook and the Read-along row the read-along EPUB the
+  /// reader opens beside the audiobook; each is its own copy on the phone.
+  Widget? _download(WorkEdition r) {
+    final plain = forkPlainEbookFile(widget.item);
+    final readAlong = forkReadAlongFile(widget.item);
+    Widget ebook(Map<String, dynamic> file, {bool readAlong = false}) => _compactIconButtons(
       context,
       _EbookDownloadButton(
         itemId: widget.itemId,
         api: widget.api,
-        ebookFile: widget.ebookFile!,
+        ebookFile: file,
         title: widget.title,
         accent: widget.accent,
+        readAlong: readAlong,
       ),
-    ),
-    _ => null,
-  };
+    );
+    return switch (r.kind) {
+      SyncEdition.audiobook => _compactIconButtons(
+        context,
+        DownloadWideButton(
+          itemId: widget.itemId,
+          coverUrl: widget.coverUrl,
+          title: widget.title,
+          author: widget.author,
+          accent: widget.accent,
+          iconOnly: true,
+        ),
+      ),
+      SyncEdition.ebook when plain != null => ebook(plain),
+      SyncEdition.readAlong when r.edition != null && readAlong != null => ebook(readAlong, readAlong: true),
+      _ => null,
+    };
+  }
 }
 
 /// Icon buttons sized to the row rather than the 48 px tap target.
@@ -291,14 +301,17 @@ Widget _compactIconButtons(BuildContext context, Widget child) {
   );
 }
 
-/// Keeps the book's ebook on the phone for offline reading, or takes it off,
-/// showing which it is and the fetch while it runs.
+/// Keeps one of the book's ebook copies on the phone for offline reading, or
+/// takes it off, showing which it is and the fetch while it runs: the plain
+/// ebook (its own copy when the reader opens a read-along EPUB), or with
+/// [readAlong] the read-along EPUB and its timings.
 class _EbookDownloadButton extends StatefulWidget {
   final String itemId;
   final ApiService api;
   final Map<String, dynamic> ebookFile;
   final String title;
   final Color accent;
+  final bool readAlong;
 
   const _EbookDownloadButton({
     required this.itemId,
@@ -306,6 +319,7 @@ class _EbookDownloadButton extends StatefulWidget {
     required this.ebookFile,
     required this.title,
     required this.accent,
+    this.readAlong = false,
   });
 
   @override
@@ -326,12 +340,23 @@ class _EbookDownloadButtonState extends State<_EbookDownloadButton> {
   void initState() {
     super.initState();
     _dl.addListener(_onDownloads);
+    forkEbookCopiesChanged.addListener(_check);
     _check();
+  }
+
+  @override
+  void didUpdateWidget(_EbookDownloadButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ebookFile['ino'] != widget.ebookFile['ino'] ||
+        oldWidget.ebookFile['version'] != widget.ebookFile['version']) {
+      _check();
+    }
   }
 
   @override
   void dispose() {
     _dl.removeListener(_onDownloads);
+    forkEbookCopiesChanged.removeListener(_check);
     super.dispose();
   }
 
@@ -340,10 +365,20 @@ class _EbookDownloadButtonState extends State<_EbookDownloadButton> {
     if (records != _records) _check();
   }
 
-  /// Saved means the file is in the reader's cache, however it got there.
+  /// Saved means this copy is on the phone, however it got there; the
+  /// read-along only while it is the server's current one.
   Future<void> _check() async {
     _records = (_dl.isDownloaded(widget.itemId), _dl.keptEbook(widget.itemId) != null);
-    final saved = await cachedEbookFileFor(widget.itemId) != null;
+    final file = widget.ebookFile;
+    final bool saved;
+    if (widget.readAlong) {
+      saved = await isEbookCached(widget.itemId, file) &&
+          await cachedEbookIsCurrent(await ebookCacheFileFor(widget.itemId, file), file);
+    } else if (forkIsPlainCopy(file)) {
+      saved = await isEbookCached(widget.itemId, file);
+    } else {
+      saved = await cachedEbookFileFor(widget.itemId) != null;
+    }
     if (mounted && saved != _saved) setState(() => _saved = saved);
   }
 
@@ -351,7 +386,13 @@ class _EbookDownloadButtonState extends State<_EbookDownloadButton> {
     final l = AppLocalizations.of(context)!;
     setState(() => _busy = true);
     try {
-      await NarrationService.instance.readerFile(widget.api, widget.itemId, widget.ebookFile, widget.title);
+      if (forkIsPlainCopy(widget.ebookFile)) {
+        await fetchEbookToCache(widget.api, widget.itemId, widget.ebookFile, widget.title);
+      } else {
+        await NarrationService.instance.readerFile(widget.api, widget.itemId, widget.ebookFile, widget.title);
+      }
+      // Read-along offline also needs its timings, which the reader keeps.
+      if (widget.readAlong) await NarrationService.instance.overlayFor(widget.api, widget.itemId);
       // As the reader does: an ebook-only book becomes a download, a book
       // with audio keeps the ebook beside it.
       final registered =
@@ -383,6 +424,19 @@ class _EbookDownloadButtonState extends State<_EbookDownloadButton> {
       ),
     );
     if (ok != true || !mounted) return;
+    // With two copies only this one goes; the kept record goes with the last.
+    if (widget.readAlong || forkIsPlainCopy(widget.ebookFile)) {
+      if (widget.readAlong) {
+        await forkDeleteReaderCopy(widget.itemId, widget.ebookFile);
+      } else {
+        await forkDeletePlainCopyOnPhone(widget.itemId);
+      }
+      final left = await cachedEbookFileFor(widget.itemId) != null || await forkPlainCopyOnPhone(widget.itemId) != null;
+      if (!left && _dl.keptEbook(widget.itemId) != null) await _dl.deleteEbookCopy(widget.itemId);
+      await _check();
+      if (mounted) showOverlayToast(context, l.ebookRemovedOffline, icon: Icons.delete_outline_rounded);
+      return;
+    }
     // An ebook-only book's download is the ebook itself; beside audio, only
     // the ebook copy goes.
     final onPhone = await _dl.onPhone(widget.itemId);

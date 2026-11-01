@@ -8,6 +8,7 @@ import 'package:palette_generator/palette_generator.dart';
 import '../utils/cover_accent.dart';
 import '../providers/auth_provider.dart';
 import '../providers/library_provider.dart';
+import '../services/api_service.dart';
 import '../services/audio_player_service.dart';
 import '../services/download_service.dart';
 import '../services/ebook_cache.dart';
@@ -59,6 +60,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
   bool _selectionMode = false;
   bool _batchActionBusy = false;
   int _dashboardRefreshTick = 0;
+  String? _bookMatchProgress;
   final Set<String> _selectedItemIds = {};
 
   void _resetSelectionState() {
@@ -505,7 +507,12 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
               selectedCount: _selectedItemIds.length,
               selectableCount: selectableItems.length,
               busy: _batchActionBusy,
-              canQuickMatch: auth.isAdmin && !lib.isPodcastLibrary,
+              busyLabel: _bookMatchProgress,
+              canQuickMatch: !lib.isPodcastLibrary &&
+                  (auth.isAdmin ||
+                      (auth.isBookOrbit &&
+                          auth.canUpdateMetadata &&
+                          lib.homeLibraryId != ApiService.bookDockLibraryId)),
               canMarkProgress: !lib.isPodcastLibrary,
               canDelete: auth.canDelete,
               canDownload: !lib.isPodcastLibrary,
@@ -519,12 +526,17 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                       .toList(),
                 ),
               ),
-              onQuickMatch: () => _runBatchAction(
-                () => DesktopBatchActions.quickMatch(
+              onQuickMatch: () => _runBatchAction(() async {
+                final ok = await DesktopBatchActions.quickMatch(
                   context,
                   _selectedItemIds.toList(),
-                ),
-              ),
+                  onProgress: (done, total) {
+                    if (mounted) setState(() => _bookMatchProgress = '$done/$total');
+                  },
+                );
+                if (mounted) setState(() => _bookMatchProgress = null);
+                return ok;
+              }),
               onMarkFinished: () => _runBatchAction(
                 () => DesktopBatchActions.setFinished(
                   context,

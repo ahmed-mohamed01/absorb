@@ -139,3 +139,14 @@ class ForkCacheClears {
     }
   }
 }
+
+/// Every read-aloud job status BookOrbit answers, whoever asked for it (the
+/// position sync controller or upstream's File info panel), so a controller
+/// follows a job it didn't start or poll itself.
+class ForkReadAloudJobs {
+  static final StreamController<Map<String, dynamic>> _updates = StreamController.broadcast();
+
+  static Stream<Map<String, dynamic>> get updates => _updates.stream;
+
+  static void add(Map<String, dynamic> job) => _updates.add(job);
+}
