@@ -145,7 +145,6 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
   bool _collapseSeries = false;
   final Set<String> _expandedSubSeries = {};
 
-  bool _didAutoScroll = false;
   LibraryProvider? _lib;
 
   int _totalBooks = 0;
@@ -158,10 +157,7 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
     // Use passed books as initial data
     _books = _unwrapBooks(widget.books);
     _sortBooks();
-    if (_books.isNotEmpty) {
-      _isLoading = false;
-      _scrollToUpNext();
-    }
+    if (_books.isNotEmpty) _isLoading = false;
     // Fetch full data from API for proper sequence info
     _fetchFromApi();
     _loadAutoDownloadState();
@@ -184,42 +180,6 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
       if (mounted && v != _rectCovers) setState(() => _rectCovers = v);
     });
     _lib = context.read<LibraryProvider>();
-  }
-
-  void _scrollToUpNext() {
-    if (_didAutoScroll || _books.isEmpty) return;
-    _didAutoScroll = true;
-    final lib = context.read<LibraryProvider>();
-    int firstUnfinished = -1;
-    for (int i = 0; i < _books.length; i++) {
-      final bookId = _books[i]['id'] as String? ?? '';
-      if (lib.getProgressData(bookId)?['isFinished'] != true) {
-        firstUnfinished = i;
-        break;
-      }
-    }
-    // If all finished, scroll to bottom; if first is unfinished, stay at top
-    final targetIndex = firstUnfinished == -1 ? _books.length - 1 : firstUnfinished;
-    if (targetIndex <= 0) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !widget.scrollController.hasClients) return;
-      // Each book card is ~120px (112 height + 8 bottom padding), after the
-      // header that scrolls with the list.
-      double above = 0;
-      for (final key in [_headerKey, _barKey]) {
-        final box = key.currentContext?.findRenderObject();
-        if (box is RenderBox && box.hasSize) above += box.size.height;
-      }
-      final offset = (above + targetIndex * 120.0).clamp(
-        0.0,
-        widget.scrollController.position.maxScrollExtent,
-      );
-      widget.scrollController.animateTo(
-        offset,
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeOutCubic,
-      );
-    });
   }
 
   bool _subSeriesHolds(Map<String, dynamic> series, String bookId) =>
@@ -250,8 +210,7 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
     const cardExtent = 120.0; // 112 card + 8 gap
     const groupHeaderExtent = 68.0;
     final columns = coverGridCount(context);
-    final width = context.size?.width ?? MediaQuery.sizeOf(context).width;
-    final gridRowExtent = ((width - 32 - 10 * (columns - 1)) / columns) / 0.65 + 10;
+    final gridRowExtent = _forkGridRowExtent(seriesTiles: _collapseSeries && _subSeriesList.isNotEmpty) + 10; // Fork: the grid's own rows
 
     if (!_collapseSeries) {
       final index = _books.indexWhere((b) => b['id'] == bookId);
@@ -630,7 +589,7 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
     return SliverPadding(
       padding: EdgeInsets.fromLTRB(16, 0, 16, 24 + MediaQuery.of(context).viewPadding.bottom),
       sliver: SliverGrid.builder(
-        gridDelegate: sheetBookGridDelegate(context, childAspectRatio: _forkFrames.gridCellRatio), // Fork: room for portrait covers
+        gridDelegate: _forkGridDelegate(seriesTiles: parsed.subSeries.isNotEmpty), // Fork: the Library grid's layout
         itemCount: parsed.subSeries.length + parsed.standalone.length,
         itemBuilder: (context, index) {
           if (index < parsed.subSeries.length) {
@@ -749,7 +708,6 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
           _isLoading = false;
           _totalBooks = fetched.length;
         });
-        if (!_didAutoScroll) _scrollToUpNext();
         try {
           lib.setSeriesBooksCache(seriesId, items, items.length);
         } catch (_) {}
@@ -772,7 +730,6 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
             _isLoading = false;
             _totalBooks = cachedTotal;
           });
-          _scrollToUpNext();
         }
       }
     }
@@ -789,7 +746,6 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
           _totalBooks = total;
           if (totalDuration != null && totalDuration > 0) _seriesDuration = totalDuration;
         });
-        if (!_didAutoScroll) _scrollToUpNext();
         // Update cache - re-read lib safely, only cache non-empty results
         if (mounted && books.isNotEmpty) {
           try { context.read<LibraryProvider>().setSeriesBooksCache(seriesId, books, total); } catch (_) {}
@@ -1466,7 +1422,7 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
             SliverPadding(
               padding: listPad,
               sliver: SliverGrid.builder(
-                gridDelegate: sheetBookGridDelegate(context, childAspectRatio: _forkFrames.gridCellRatio), // Fork: room for portrait covers
+                gridDelegate: _forkGridDelegate(), // Fork: the Library grid's layout
                 itemCount: _books.length,
                 itemBuilder: (context, index) => _asJumpTarget(
                   _books[index]['id'] == _jumpTargetId,

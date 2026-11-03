@@ -98,28 +98,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('grid tile: a square cover drops to the bottom of a portrait slot', (tester) async {
-    final frames = ForkShelfFrames([_book(2 / 3), _book(1)], 1.0, ownFrames: true);
-    await tester.pumpWidget(Directionality(
-      textDirection: TextDirection.ltr,
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: SizedBox(
-          width: 100,
-          height: 200,
-          child: ForkShelfGridTile(
-            frames: frames,
-            item: _book(1),
-            child: const Column(children: [
-              AspectRatio(aspectRatio: 1, child: ColoredBox(key: ValueKey('cover'), color: Colors.grey)),
-            ]),
-          ),
+  // A copy of the series sheet's tile layout: the cover's slot, then the
+  // title and a sub-series tile's author line in labelSmall.
+  Widget titledTile(double extent, double width, double scale, TextScaler scaler) => MaterialApp(
+        theme: ThemeData(useMaterial3: true),
+        home: MediaQuery(
+          data: MediaQueryData(textScaler: scaler),
+          child: Builder(builder: (context) {
+            final small = Theme.of(context).textTheme.labelSmall;
+            return Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: width,
+                height: extent,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const AspectRatio(aspectRatio: 1, child: ColoredBox(color: Colors.grey)),
+                  const SizedBox(height: 5),
+                  Text('Title', maxLines: 1, style: small?.copyWith(fontSize: 11 * scale)),
+                  Text('Author', maxLines: 1, style: small?.copyWith(fontSize: 10 * scale)),
+                ]),
+              ),
+            );
+          }),
         ),
-      ),
-    ));
-    final cover = tester.getRect(find.byKey(const ValueKey('cover')));
-    expect(cover.top, closeTo(50, 0.01));
-    expect(cover.bottom, closeTo(150, 0.01));
+      );
+
+  testWidgets('a titled grid cell fits its title and second line at any font size', (tester) async {
+    for (final scale in [1.0, 1.5]) {
+      for (final font in [1.0, 1.5, 2.0, 3.0]) {
+        final scaler = TextScaler.linear(font);
+        final width = 100 * scale;
+        final extent = forkTitledGridExtent(
+            tileWidth: width, slot: 1.0, labelScale: scale, textScaler: scaler, secondLine: true);
+        await tester.pumpWidget(titledTile(extent, width, scale, scaler));
+        expect(tester.takeException(), isNull, reason: 'label scale $scale, font $font');
+      }
+    }
+  });
+
+  test('a titled grid cell is a portrait slot tall when the slot is portrait', () {
+    const scaler = TextScaler.noScaling;
+    final square = forkTitledGridExtent(tileWidth: 90, slot: 1.0, labelScale: 1, textScaler: scaler);
+    final portrait = forkTitledGridExtent(tileWidth: 90, slot: forkPortraitFrame, labelScale: 1, textScaler: scaler);
+    expect(portrait - square, closeTo(90 / forkPortraitFrame - 90, 0.0001));
   });
 
   test('grid cells keep upstream\'s square ratio and grow for portrait books', () {

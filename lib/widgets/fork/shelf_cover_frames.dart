@@ -108,32 +108,21 @@ class ForkShelfCover extends StatelessWidget {
   }
 }
 
-/// A sheet's grid tile whose cover is drawn in [item]'s own shape, pushed
-/// down so the cover sits at the bottom of [item]'s slot from [frames] and
-/// lines up with the portrait covers beside it. [child] is the whole tile,
-/// cover and text, as `GridBookTile` draws it.
-class ForkShelfGridTile extends StatelessWidget {
-  /// The sheet's cover shapes.
-  final ForkShelfFrames frames;
-
-  /// The book the tile shows.
-  final Object? item;
-
-  /// The tile, with its cover in [item]'s own shape.
-  final Widget child;
-
-  /// Creates [item]'s tile from [frames].
-  const ForkShelfGridTile({super.key, required this.frames, required this.item, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, constraints) {
-      final w = constraints.maxWidth;
-      final drop = w / frames.slotOf(item) - w / frames.of(item);
-      return Padding(padding: EdgeInsets.only(top: drop > 0 ? drop : 0), child: child);
-    });
-  }
-}
+/// Height of a grid cell whose tile is a cover in a [slot]-shaped space
+/// [tileWidth] wide, then a title and, with [secondLine], one more line (a
+/// sub-series tile's author), at the grid's [labelScale] and the phone's
+/// font size [textScaler], with a little room under them.
+double forkTitledGridExtent({
+  required double tileWidth,
+  required double slot,
+  required double labelScale,
+  required TextScaler textScaler,
+  bool secondLine = false,
+}) =>
+    tileWidth / slot
+    + 5 + textScaler.scale(11 * labelScale) * 1.6
+    + (secondLine ? textScaler.scale(10 * labelScale) * 1.6 : 0)
+    + 8;
 
 /// The cover shapes of a grid of [items] outside the shelf and series
 /// sheets (the Library grid, the author and narrator sheets): each book's

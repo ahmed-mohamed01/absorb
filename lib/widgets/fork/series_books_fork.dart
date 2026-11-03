@@ -21,30 +21,44 @@ extension _ForkSeriesBooks on _SeriesBooksSheetState {
     return frames;
   }
 
-  /// [book]'s grid tile with its cover in its own shape, lined up at the
-  /// bottom of a portrait slot beside portrait covers.
+  /// The shape of every cover slot in the grid, as the Library grid lays
+  /// them: square on a series of mixed shapes, portrait only when every
+  /// cover is.
+  double get _forkCellSlot =>
+      forkGridTall(_forkFrames) && _books.isNotEmpty ? _forkFrames.of(_books.first) : 1.0;
+
+  /// A grid row's height: the cover and title, plus the sub-series tiles'
+  /// second line when [seriesTiles], so rows sit as close as the Library's
+  /// whatever the books' shapes. The Up next jump reads it too.
+  double _forkGridRowExtent({bool seriesTiles = false}) => forkTitledGridExtent(
+        tileWidth: coverGridTileWidth(context),
+        slot: _forkCellSlot,
+        labelScale: coverGridTextScale(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        secondLine: seriesTiles,
+      );
+
+  /// The grid's cells, each [_forkGridRowExtent] tall.
+  SliverGridDelegate _forkGridDelegate({bool seriesTiles = false}) => SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: coverGridCount(context),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        mainAxisExtent: _forkGridRowExtent(seriesTiles: seriesTiles),
+      );
+
+  /// [book]'s grid tile with its cover in its own shape, centred in a square
+  /// slot beside covers of other shapes, as in the Library grid.
   Widget _forkGridTile(Map<String, dynamic> book) {
     final frames = _forkFrames;
-    return ForkShelfGridTile(
-      frames: frames,
-      item: book,
-      child: GridBookTile(item: book, coverAspectRatio: frames.of(book), sequenceBadge: _getSequenceString(book),
-          showAuthor: _forkShowAuthor),
-    );
+    return GridBookTile(item: book, coverAspectRatio: frames.of(book), coverSlot: forkGridSlot(frames, book),
+        sequenceBadge: _getSequenceString(book), showAuthor: _forkShowAuthor);
   }
 
-  /// A sub-series tile in the shape of its first book, lined up like a
-  /// book's tile.
-  Widget _forkSeriesTile(Map<String, dynamic> series) {
-    final frames = _forkFrames;
-    final books = series['books'] as List<dynamic>? ?? const [];
-    final first = books.isEmpty ? null : books.first;
-    return ForkShelfGridTile(
-      frames: frames,
-      item: first,
-      child: GridSeriesTileDirect(series: series, coverAspectRatio: frames.of(first), parentSeriesId: widget.seriesId),
-    );
-  }
+  /// A sub-series tile, its stacked covers in the grid's slot. Not its first
+  /// book's shape: a book that isn't loaded yet has none and would take the
+  /// cover setting's, taller than the row.
+  Widget _forkSeriesTile(Map<String, dynamic> series) =>
+      GridSeriesTileDirect(series: series, coverAspectRatio: _forkCellSlot, parentSeriesId: widget.seriesId);
 
   /// [upNext] with the series actions' overflow button on its right, or
   /// the button alone on the right when nothing is up next.
