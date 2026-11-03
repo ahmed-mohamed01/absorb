@@ -3,17 +3,29 @@
 // One book's own files make the chain: its plain EPUB, its read-aloud EPUB
 // and its audio, with Audiobookshelf hanging off the audio. Upstream's
 // read-aloud sync joins the read-aloud to the audio and to the plain EPUB;
-// Whisper joins the plain EPUB to the audio only in a book with no
-// read-aloud. Pure Dart with no imports, so every state can be pinned by a
-// unit test. See FORK_NOTES.md.
+// the fork's edition sync timing index joins the plain EPUB to the audio in
+// a book with no read-aloud. Pure Dart with no imports, so every state can
+// be pinned by a unit test. See FORK_NOTES.md.
 
 // ─── Server enums ───────────────────────────────────────────
 // Shared with the wire models in bookorbit_position_sync.dart, which parse
 // them from the server's strings.
 
-enum AlignmentStatus { none, pending, building, ready, failed, unalignable }
+/// A book's timing index as `GET /edition-sync/books/:id/state` reports it;
+/// queued is derived by the server for a wanted book with no usable index.
+enum EditionSyncIndexStatus { none, queued, running, ready, failed, stale }
 
-enum AlignmentBlock { disabled, unavailable, busy }
+/// Why edition sync is off for a book: the server's effectiveReason, plus
+/// upstream's read-aloud sync being off, which the switch also reads.
+enum EditionSyncOffReason {
+  serverDisabled,
+  permissionDenied,
+  userDisabled,
+  notSelected,
+  excluded,
+  notEligible,
+  readAloudSyncOff,
+}
 
 enum ReadAloudSyncMode { auto, disabled }
 
@@ -56,7 +68,7 @@ abstract final class PositionSyncCopy {
 
   static const headerNeedsAttention = 'Needs attention';
   static const headerCheckSync = 'Check sync';
-  static const headerAligning = 'Aligning';
+  static const headerIndexing = 'Indexing'; // local
   static String headerInSync(int n, int m) => '$n of $m in sync';
   static const headerNotSyncing = 'Not syncing';
   static const introSynced = 'Synced files keep the same position as you switch between them.';
@@ -75,13 +87,6 @@ abstract final class PositionSyncCopy {
 
   static const pillAvailable = 'Not linked';
   static const pillLinked = 'Linked';
-  static const pillLinkedViaWhisper = 'Linked · via Whisper';
-  static const pillAligning = 'Aligning';
-  static const pillRebuilding = 'Rebuilding';
-  static const pillAlignmentFailed = 'Alignment failed';
-  static const pillOutOfDate = 'Out of date';
-  static const pillNotAligned = 'Not aligned';
-  static const pillCantAlign = "Can't align";
   static const pillCantReach = "Can't reach server";
   static const pillOneWay = 'Linked · one way';
   static const pillDiverged = 'Out of sync';
@@ -94,6 +99,8 @@ abstract final class PositionSyncCopy {
   static const epubCopiesDescription =
       'Web reader, Kobo, and KOReader positions stay in sync across the EPUB copies. Add matching audiobook files to sync the audiobook too.';
 
+  static const qualifierViaTimings = 'via timing index'; // local
+  static const qualifierViaReadAloud = 'via read-aloud'; // local
   static const qualifierViaWhisper = 'via Whisper';
   static const qualifierDirect = 'direct';
   static const qualifierOneWay = 'one way';
@@ -112,8 +119,8 @@ abstract final class PositionSyncCopy {
 
   static const disabledNothingToLink = 'There is nothing to link yet.';
 
-  static const explainWhisper =
-      "Two-way. Whisper maps the audiobook's audio onto the ebook's text, so your position carries in both directions.";
+  static const explainTimings = // local
+      "Two-way. BookOrbit's timing index maps the audiobook's narration onto the ebook's text, so your position carries in both directions.";
   static const explainReadAlongAudio =
       "Two-way. The read-aloud narrates the audiobook's own audio, so positions map directly between them.";
   static const explainAbsTwoWay =
@@ -122,24 +129,14 @@ abstract final class PositionSyncCopy {
       'One-way. Listening progress comes from your Audiobookshelf server through its API and nothing is sent back.';
   static const explainAbsToAbs =
       'One-way. Listening progress is sent to your Audiobookshelf server through its API and nothing is read back.';
-  static const noteAligning = 'The ebook and audiobook keep their own positions until it finishes.';
-  static const noteAlignmentFailed = "Whisper stopped while aligning, so the ebook and audiobook aren't syncing.";
-  static const noteStale =
-      "The audiobook file changed after this map was built. Syncing is paused until it's rebuilt.";
   static const noteAbsUnreachable = 'Progress catches up when Audiobookshelf is back.';
   static const noteAbsSending = 'Your newer position is on its way.';
-  static const alignUnalignable = "Position sync isn't available for this ebook and audiobook.";
-  static const alignIdle = 'Maps the audio to the text so your position carries between the ebook and the audiobook.';
-
   static const actionRetry = 'Retry';
-  static const actionRebuildAlignment = 'Rebuild alignment';
-  static const actionAlignNow = 'Align now';
   static const actionMatch = 'Match';
   static const actionConfirm = 'Confirm';
   static const actionChange = 'Change';
   static const actionReview = 'Review';
   static const actionModify = 'Modify';
-  static const actionCancelAlignment = 'Cancel alignment';
   static const actionAbsPush = 'Send to ABS';
   static const actionAbsPull = 'Use ABS';
   static const actionAbsUseNow = 'Use it now';
@@ -154,8 +151,7 @@ abstract final class PositionSyncCopy {
   static const toastAbsPaused = 'Stopped syncing with Audiobookshelf.';
   static const toastAbsChanged = 'Audiobookshelf item changed.';
   static const toastAbsFailed = "Couldn't update Audiobookshelf sync.";
-  static const toastSyncCancelKeptRunning = "The position sync build couldn't be cancelled and keeps running.";
-  static const toastAlignBuildFailed = 'Failed to start alignment build.';
+  static const toastEditionSyncFailed = "Couldn't update edition sync."; // local
   static const toastReadAloudSyncFailed = 'Could not update read-aloud progress sync.';
   static const toastReviewInBrowser = 'Review opens in BookOrbit.'; // local
   static const searchFailed = "Couldn't search for a match. Try again."; // local
@@ -178,11 +174,54 @@ abstract final class PositionSyncCopy {
   static const absReceivingHint = 'Picked up on the next sync.';
   static String absLibrary(String name) => name.toLowerCase().endsWith('library') ? name : '$name library';
 
-  static const alignmentBlocks = <AlignmentBlock, String>{
-    AlignmentBlock.disabled: 'Reading alignment is turned off for this server.',
-    AlignmentBlock.unavailable: "Reading alignment isn't configured on this server yet.",
-    AlignmentBlock.busy: 'The server is busy aligning other books. Try again shortly.',
+  // Edition sync (editionSync.status, editionSync.header).
+  static const syncEditions = 'Sync editions';
+  static const allEditionsKeepProgress = 'All editions keep the same progress'; // local
+  static const indexOff = 'Off';
+  static const headerEpubOnly = 'EPUB only';
+  static const headerReasons = <ReadAloudSyncReason, String>{
+    ReadAloudSyncReason.durationMismatch: 'Durations differ',
+    ReadAloudSyncReason.missingDuration: 'No duration',
+    ReadAloudSyncReason.noAudioFiles: 'No matching audio',
+    ReadAloudSyncReason.noMediaOverlayEpub: 'No read-aloud EPUB',
   };
+  static const offServerDisabled = 'An admin has turned edition sync off for this server.';
+  static const offPermissionDenied = "Your account doesn't have edition sync."; // local
+  static const offUserDisabled = 'Your edition sync is off.';
+  static const offNotSelected = "Only selected books sync, and this one isn't selected.";
+  static const offExcluded = 'You turned sync off for this book.';
+  static const offNotEligible = "This book can't be synced."; // local
+  static const offReadAloudSync = 'Read-aloud sync is off for this book.'; // local
+  static String offReason(EditionSyncOffReason r) => switch (r) {
+    EditionSyncOffReason.serverDisabled => offServerDisabled,
+    EditionSyncOffReason.permissionDenied => offPermissionDenied,
+    EditionSyncOffReason.userDisabled => offUserDisabled,
+    EditionSyncOffReason.notSelected => offNotSelected,
+    EditionSyncOffReason.excluded => offExcluded,
+    EditionSyncOffReason.notEligible => offNotEligible,
+    EditionSyncOffReason.readAloudSyncOff => offReadAloudSync,
+  };
+  static const indexSynced = 'Synced';
+  static const indexViaWhisper = 'Synced via Whisper';
+  static const indexCantIndex = "Couldn't index";
+  static const indexOutOfDate = 'Out of date';
+  static const indexQueued = 'Queued';
+  static const indexNotIndexed = 'Not indexed yet';
+  static String indexQueuedAt(int position) => 'Queued #$position';
+  static const indexStartingSoon = 'Starting soon';
+  static const indexRunNow = 'Run now';
+  static const indexRetry = 'Retry indexing';
+  static String indexRunning(String stage, int percent) => '$stage · $percent%';
+  static const indexDetailWhisper = 'Indexing failed, so the older Whisper alignment is used instead.';
+  static String indexDetailQueued(String when) => 'Indexing $when. Positions stay separate until then.';
+  static const indexDetailQueuedSoon = 'Indexing starts soon. Positions stay separate until then.';
+  static const indexDetailWaiting = 'Waiting to be indexed. Positions stay separate until then.';
+  static const indexDetailStale = "This book's files changed. Sync pauses until it is indexed again.";
+  static String indexDetailStaleAt(String when) =>
+      "This book's files changed. Sync pauses until it is indexed again, $when.";
+  static const indexDetailStaleSoon =
+      "This book's files changed. Sync pauses until it is indexed again, which starts soon.";
+  static const indexDetailFailed = 'The ebook and audiobook keep their own positions until it is indexed.';
 
   static const syncReasons = <ReadAloudSyncReason, String>{
     ReadAloudSyncReason.noMediaOverlayEpub: 'A read-aloud EPUB with media overlays is required.',
@@ -284,9 +323,22 @@ abstract final class PositionSyncCopy {
 
 // ─── Helpers ────────────────────────────────────────────────
 
-/// Disabled and unavailable only change with a server config update.
-bool isTerminalBlock(AlignmentBlock? reason) =>
-    reason == AlignmentBlock.disabled || reason == AlignmentBlock.unavailable;
+const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// When the next scheduled indexing run starts, as upstream's describeNextRun
+/// words it: "tonight 02:00", "tomorrow 14:00" or "Tue, Nov 3 02:00".
+String describeNextRun(DateTime at, DateTime now) {
+  final local = at.toLocal();
+  final today = DateTime(now.year, now.month, now.day);
+  // Rounded, so a day that gains or loses an hour still counts as one.
+  final dayDiff = (DateTime(local.year, local.month, local.day).difference(today).inHours / 24).round();
+  final hour = local.hour;
+  final time = '${hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  if (dayDiff == 0) return '${hour >= 20 ? 'tonight' : 'today'} $time';
+  if (dayDiff == 1) return '${hour < 5 ? 'tonight' : 'tomorrow'} $time';
+  return '${_weekdays[local.weekday - 1]}, ${_months[local.month - 1]} ${local.day} $time';
+}
 
 /// 0..100 for display; rounding alone would read 100% for an unfinished
 /// item at 99.5%.
@@ -399,28 +451,56 @@ class SyncChainEdition {
       {this.title, required this.formatName, this.fileCount = 1, this.sizeBytes = 0, this.progress});
 }
 
-class SyncChainAlignment {
-  final AlignmentStatus status;
-  final bool stale;
-  final String? builtAt;
-  final int? samplesDone;
-  final int? samplesTotal;
-  final AlignmentBlock? buildBlocked;
-  final String? buildError;
+/// The fork's edition sync for a book with a plain EPUB and audio and no
+/// read-aloud: its per-book switch and the timing index behind it.
+class SyncChainIndex {
+  final EditionSyncIndexStatus status;
 
-  /// A build is queued or running, including the window between a request
-  /// and the first building read.
-  final bool running;
-  const SyncChainAlignment({
-    this.status = AlignmentStatus.none,
-    this.stale = false,
-    this.builtAt,
-    this.samplesDone,
-    this.samplesTotal,
-    this.buildBlocked,
-    this.buildError,
-    this.running = false,
+  /// The switch: sync is on for the book and upstream's read-aloud sync mode
+  /// isn't off, as upstream's editionSyncToggleValue reads it.
+  final bool on;
+
+  /// Set while running: the worker stage and its percent.
+  final String? stage;
+  final double? progress;
+
+  /// Set while queued, 1-based.
+  final int? queuePosition;
+  final String? error;
+
+  /// Failed, and the Whisper alignment is used instead.
+  final bool whisperFallback;
+  final bool canRunNow;
+  final bool canRetry;
+
+  /// A run is already starting for it: pinned or picked up by the active run.
+  final bool startingSoon;
+
+  /// When the next scheduled run starts, already worded.
+  final String? when;
+
+  /// A switch, run-now or retry request is in flight.
+  final bool acting;
+
+  /// Why the switch is off, when the server said.
+  final EditionSyncOffReason? offReason;
+  const SyncChainIndex({
+    this.status = EditionSyncIndexStatus.none,
+    this.on = false,
+    this.stage,
+    this.progress,
+    this.queuePosition,
+    this.error,
+    this.whisperFallback = false,
+    this.canRunNow = false,
+    this.canRetry = false,
+    this.startingSoon = false,
+    this.when,
+    this.acting = false,
+    this.offReason,
   });
+
+  bool get running => on && status == EditionSyncIndexStatus.running;
 }
 
 /// Upstream's per-book read-aloud sync between the read-aloud EPUB, the
@@ -554,14 +634,14 @@ class SyncChainSnapshot {
   final SyncChainEdition? audiobook;
   final SyncChainEdition? readAlong;
   final SyncChainReadAloudSlot readAloudSlot;
-  final SyncChainAlignment alignment;
+
+  /// Null where edition sync doesn't reach this reader or book: off on the
+  /// server or for the account, no permission, or a book it can't index.
+  final SyncChainIndex? index;
   final ReadAloudSync readAloud;
 
   /// Null without the Audiobookshelf sync permission.
   final SyncChainAbs? abs;
-
-  /// May build and cancel the Whisper alignment.
-  final bool canAlign;
   const SyncChainSnapshot({
     required this.bookId,
     this.coverVersion,
@@ -569,10 +649,9 @@ class SyncChainSnapshot {
     this.audiobook,
     this.readAlong,
     this.readAloudSlot = const SyncChainReadAloudSlot(),
-    this.alignment = const SyncChainAlignment(),
+    this.index,
     this.readAloud = const ReadAloudSync(),
     this.abs,
-    this.canAlign = false,
   });
 
   SyncChainSnapshot _withoutAbs() => SyncChainSnapshot(
@@ -582,9 +661,8 @@ class SyncChainSnapshot {
         audiobook: audiobook,
         readAlong: readAlong,
         readAloudSlot: readAloudSlot,
-        alignment: alignment,
+    index: index,
         readAloud: readAloud,
-        canAlign: canAlign,
       );
 
   SyncChainEdition? edition(SyncEdition e) => switch (e) {
@@ -598,10 +676,10 @@ class SyncChainSnapshot {
 // ─── Rows ───────────────────────────────────────────────────
 
 enum ChainActionId {
-  cancelAlignment,
-  retryAlignment,
-  alignNow,
-  rebuildAlignment,
+  enableIndexSync,
+  disableIndexSync,
+  runIndexNow,
+  retryIndex,
   enableReadAloudSync,
   disableReadAloudSync,
   createReadAloud,
@@ -696,7 +774,8 @@ class ChainGhostRow extends ChainRow {
 
   /// At most one: Match, which opens the Change page.
   final ChainAction? action;
-  const ChainGhostRow({required this.edition, required this.frame, required this.label, required this.note, this.action});
+  const ChainGhostRow({required this.edition, required this.frame, required this.label, required this.note, this.action,
+  });
 }
 
 enum ReadAloudSlotVariant { notCreated, unavailable, queued, processing, review, failed }
@@ -733,14 +812,12 @@ class ChainReadAloudSlotRow extends ChainRow {
 enum ConnectorKey { ebookReadAlong, readAlongAudiobook, ebookAudiobook, audiobookAbs }
 
 enum ConnectorState {
-  aligning,
-  rebuilding,
-  alignmentFailed,
-  outOfDate,
-  cantAlign,
-  alignmentBlocked,
-  notAligned,
-  linkedViaWhisper,
+  indexSynced,
+  indexViaWhisper,
+  indexRunning,
+  indexQueued,
+  indexStale,
+  indexFailed,
   readAloudSynced,
   readAloudPartial,
   readAloudIssue,
@@ -775,8 +852,8 @@ class ChainConnectorRow extends ChainRow {
   final ChainArrow arrow;
   final String pill;
 
-  /// Muted text after the pair label: "via Whisper" when synced, "sync off"
-  /// when off.
+  /// Muted text after the pair label: "via timing index" when synced, "sync
+  /// off" when off.
   final String? qualifier;
   final String? explainer;
 
@@ -786,14 +863,7 @@ class ChainConnectorRow extends ChainRow {
   /// Why a disabled switch cannot be turned on.
   final String? disabledReason;
   final String? note;
-
-  /// Literal text under the note, such as the alignment build error.
-  final String? detail;
   final List<ChainAction> actions;
-
-  /// The X beside the ticks while aligning.
-  final ChainAction? cancel;
-  final ({int? done, int? total})? ticks;
 
   /// Audiobookshelf states add the live hint line for receiving and
   /// diverged.
@@ -812,10 +882,7 @@ class ChainConnectorRow extends ChainRow {
     this.toggle,
     this.disabledReason,
     this.note,
-    this.detail,
     this.actions = const [],
-    this.cancel,
-    this.ticks,
     this.absDetails = false,
   });
 }
@@ -838,18 +905,6 @@ class SyncChain {
 
 // ─── Derivation (same names as sync-chain.ts) ───────────────
 
-enum _AlignmentState { aligning, rebuilding, alignmentFailed, outOfDate, cantAlign, alignmentBlocked, notAligned, ready }
-
-_AlignmentState _alignmentState(SyncChainAlignment a) {
-  if (a.running || a.status == AlignmentStatus.pending || a.status == AlignmentStatus.building) {
-    return a.builtAt == null ? _AlignmentState.aligning : _AlignmentState.rebuilding;
-  }
-  if (a.status == AlignmentStatus.failed) return _AlignmentState.alignmentFailed;
-  if (a.status == AlignmentStatus.ready) return a.stale ? _AlignmentState.outOfDate : _AlignmentState.ready;
-  if (a.status == AlignmentStatus.unalignable) return _AlignmentState.cantAlign;
-  return isTerminalBlock(a.buildBlocked) ? _AlignmentState.alignmentBlocked : _AlignmentState.notAligned;
-}
-
 ConnectorState _absState(AbsLink link, AbsLive? live) {
   switch (live?.status) {
     case AbsLiveStatus.unreachable:
@@ -866,8 +921,8 @@ ConnectorState _absState(AbsLink link, AbsLive? live) {
 }
 
 /// Upstream's read-aloud sync owns text and audio wherever the book has a
-/// read-aloud, so Whisper fills in only without one.
-bool usesWhisper(SyncChainSnapshot s) => s.ebook != null && s.audiobook != null && s.readAlong == null;
+/// read-aloud, so the timing index fills in only without one.
+bool usesTimingIndex(SyncChainSnapshot s) => s.ebook != null && s.audiobook != null && s.readAlong == null && s.index != null;
 
 bool _hasReadAloudPair(SyncChainSnapshot s) => s.readAlong != null && s.audiobook != null;
 
@@ -935,7 +990,8 @@ ChainRow _absSlot(SyncChainAbs abs) {
   final link = abs.link;
   if (link == null) {
     return _ghostRow(SyncEdition.abs, ChainFrame.group, PositionSyncCopy.ghostNoMatchAbs,
-        action: const ChainAction(ChainActionId.change, PositionSyncCopy.actionMatch));
+        action: const ChainAction(ChainActionId.change, PositionSyncCopy.actionMatch),
+    );
   }
   if (link.pausedReason == AbsPausedReason.positionSyncOff) {
     return _ghostRow(SyncEdition.abs, ChainFrame.group, PositionSyncCopy.ghostAbsPositionSyncOff);
@@ -965,10 +1021,7 @@ ChainConnectorRow _connectorRow(
   ChainSwitch? toggle,
   String? disabledReason,
   String? note,
-  String? detail,
   List<ChainAction> actions = const [],
-  ChainAction? cancel,
-  ({int? done, int? total})? ticks,
   bool absDetails = false,
 }) =>
     ChainConnectorRow(
@@ -985,94 +1038,247 @@ ChainConnectorRow _connectorRow(
       toggle: toggle,
       disabledReason: disabledReason,
       note: note,
-      detail: detail,
-      actions: actions,
-      cancel: cancel,
-      ticks: ticks,
+  actions: actions,
       absDetails: absDetails,
     );
 
-ChainAction? _alignAction(SyncChainSnapshot s, ChainActionId id, String label) =>
-    s.canAlign ? ChainAction(id, label) : null;
+/// The timing index's status in one line, as upstream's indexStatus words
+/// the Editions card header: shared by the sheet's connector and the card.
+class EditionSyncStatus {
+  final ConnectorState state;
+  final ChainTone tone;
+  final String label;
 
-List<ChainAction> _present(List<ChainAction?> actions) => [for (final a in actions) if (a != null) a];
+  /// Set when there is something to explain: a queue, a change, a failure.
+  final String? detail;
+  final List<ChainAction> actions;
+  const EditionSyncStatus(this.state, this.tone, this.label, {this.detail, this.actions = const []});
+}
 
-ChainConnectorRow _alignmentConnector(SyncChainSnapshot s) {
-  final a = s.alignment;
-  final ticks = (done: a.samplesDone, total: a.samplesTotal);
-  const from = SyncEdition.ebook;
-  const to = SyncEdition.audiobook;
-  switch (_alignmentState(a)) {
-    case _AlignmentState.aligning:
-      return _connectorRow(from, to,
-          state: ConnectorState.aligning,
-          tone: ChainTone.info,
-          pill: PositionSyncCopy.pillAligning,
-          note: PositionSyncCopy.noteAligning,
-          cancel: _alignAction(s, ChainActionId.cancelAlignment, PositionSyncCopy.actionCancelAlignment),
-          ticks: ticks,
-          explainer: PositionSyncCopy.explainWhisper);
-    case _AlignmentState.rebuilding:
-      return _connectorRow(from, to,
-          state: ConnectorState.rebuilding,
-          tone: ChainTone.info,
-          pill: PositionSyncCopy.pillRebuilding,
-          cancel: _alignAction(s, ChainActionId.cancelAlignment, PositionSyncCopy.actionCancelAlignment),
-          ticks: ticks,
-          explainer: PositionSyncCopy.explainWhisper);
-    case _AlignmentState.alignmentFailed:
-      return _connectorRow(from, to,
-          state: ConnectorState.alignmentFailed,
-          tone: ChainTone.destructive,
-          pill: PositionSyncCopy.pillAlignmentFailed,
-          note: PositionSyncCopy.noteAlignmentFailed,
-          detail: a.buildError,
-          actions: _present([_alignAction(s, ChainActionId.retryAlignment, PositionSyncCopy.actionRetry)]));
-    case _AlignmentState.outOfDate:
-      return _connectorRow(from, to,
-          state: ConnectorState.outOfDate,
-          tone: ChainTone.warning,
-          pill: PositionSyncCopy.pillOutOfDate,
-          note: PositionSyncCopy.noteStale,
-          actions: _present([_alignAction(s, ChainActionId.rebuildAlignment, PositionSyncCopy.actionRebuildAlignment)]),
-          explainer: PositionSyncCopy.explainWhisper);
-    case _AlignmentState.cantAlign:
-      return _connectorRow(from, to,
-          state: ConnectorState.cantAlign,
-          tone: ChainTone.muted,
-          pill: PositionSyncCopy.pillCantAlign,
-          note: PositionSyncCopy.alignUnalignable);
-    case _AlignmentState.alignmentBlocked:
-      return _connectorRow(from, to,
-          state: ConnectorState.alignmentBlocked,
-          tone: ChainTone.muted,
-          pill: PositionSyncCopy.pillNotAligned,
-          note: PositionSyncCopy.alignmentBlocks[a.buildBlocked]);
-    case _AlignmentState.notAligned:
-      return _connectorRow(from, to,
-          state: ConnectorState.notAligned,
-          tone: ChainTone.muted,
-          pill: PositionSyncCopy.pillNotAligned,
-          note: a.buildBlocked == AlignmentBlock.busy
-              ? PositionSyncCopy.alignmentBlocks[AlignmentBlock.busy]
-              : PositionSyncCopy.alignIdle,
-          actions: _present([_alignAction(s, ChainActionId.alignNow, PositionSyncCopy.actionAlignNow)]),
-          explainer: PositionSyncCopy.explainWhisper);
-    case _AlignmentState.ready:
-      return _connectorRow(from, to,
-          state: ConnectorState.linkedViaWhisper,
-          tone: ChainTone.success,
-          pill: PositionSyncCopy.pillLinkedViaWhisper,
-          qualifier: PositionSyncCopy.qualifierViaWhisper,
-          explainer: PositionSyncCopy.explainWhisper);
+EditionSyncStatus editionSyncStatus(SyncChainIndex i) {
+  ChainAction? runNow() => i.canRunNow && !i.startingSoon
+      ? ChainAction(ChainActionId.runIndexNow, PositionSyncCopy.indexRunNow, disabled: i.acting)
+      : null;
+  ChainAction? retry() =>
+      i.canRetry ? ChainAction(ChainActionId.retryIndex, PositionSyncCopy.indexRetry, disabled: i.acting) : null;
+  // What's next for a queued or changed book: starting now, at its next
+  // scheduled run, or with no time given.
+  String next(String soon, String Function(String when) at, String otherwise) => i.startingSoon
+      ? soon
+      : i.when != null
+      ? at(i.when!)
+      : otherwise;
+  final whisper = EditionSyncStatus(
+    ConnectorState.indexViaWhisper,
+    ChainTone.warning,
+    PositionSyncCopy.indexViaWhisper,
+    detail: PositionSyncCopy.indexDetailWhisper,
+    actions: _present([retry()]),
+  );
+  if (!i.on) {
+    final why = i.offReason;
+    return EditionSyncStatus(
+      ConnectorState.available,
+      ChainTone.muted,
+      PositionSyncCopy.indexOff,
+      detail: why == null ? null : PositionSyncCopy.offReason(why),
+    );
   }
+  switch (i.status) {
+    case EditionSyncIndexStatus.ready:
+      return i.whisperFallback
+          ? whisper
+          : const EditionSyncStatus(ConnectorState.indexSynced, ChainTone.success, PositionSyncCopy.indexSynced);
+    case EditionSyncIndexStatus.running:
+      final stage = readAloudStageLabel(i.stage);
+      final p = i.progress;
+      return EditionSyncStatus(
+        ConnectorState.indexRunning,
+        ChainTone.info,
+        p == null ? stage : PositionSyncCopy.indexRunning(stage, p.clamp(0, 100).round()),
+      );
+    case EditionSyncIndexStatus.queued:
+    case EditionSyncIndexStatus.none:
+      // Never indexed and in no queue says so, where BookOrbit says Queued.
+      final head = i.queuePosition != null
+          ? PositionSyncCopy.indexQueuedAt(i.queuePosition!)
+          : i.status == EditionSyncIndexStatus.none && !i.startingSoon && i.when == null
+          ? PositionSyncCopy.indexNotIndexed
+          : PositionSyncCopy.indexQueued;
+      final tail = i.startingSoon ? PositionSyncCopy.indexStartingSoon : i.when;
+      return EditionSyncStatus(
+        ConnectorState.indexQueued,
+        ChainTone.info,
+        tail == null ? head : '$head · $tail',
+        detail: next(
+          PositionSyncCopy.indexDetailQueuedSoon,
+          PositionSyncCopy.indexDetailQueued,
+          PositionSyncCopy.indexDetailWaiting,
+        ),
+        actions: _present([runNow()]),
+      );
+    case EditionSyncIndexStatus.stale:
+      return EditionSyncStatus(
+        ConnectorState.indexStale,
+        ChainTone.warning,
+        PositionSyncCopy.indexOutOfDate,
+        detail: next(
+          PositionSyncCopy.indexDetailStaleSoon,
+          PositionSyncCopy.indexDetailStaleAt,
+          PositionSyncCopy.indexDetailStale,
+        ),
+        actions: _present([runNow()]),
+      );
+    case EditionSyncIndexStatus.failed:
+      if (i.whisperFallback) return whisper;
+      final error = i.error;
+      return EditionSyncStatus(
+        ConnectorState.indexFailed,
+        ChainTone.destructive,
+        PositionSyncCopy.indexCantIndex,
+        detail: error == null || error.isEmpty ? PositionSyncCopy.indexDetailFailed : error,
+        actions: _present([retry()]),
+      );
+  }
+}
+
+/// Upstream's read-aloud sync in the same one line, as upstream's
+/// readAlongStatus words it for a book with a read-aloud.
+EditionSyncStatus readAlongSyncStatus(SyncChainSnapshot s) {
+  final sync = s.readAloud;
+  // Only a book the reader turned off says so; otherwise plain Off, as
+  // upstream says.
+  if (sync.mode == ReadAloudSyncMode.disabled) {
+    return const EditionSyncStatus(
+      ConnectorState.available,
+      ChainTone.muted,
+      PositionSyncCopy.indexOff,
+      detail: PositionSyncCopy.offReadAloudSync,
+    );
+  }
+  if (sync.state == ReadAloudSyncState.disabled) {
+    return const EditionSyncStatus(ConnectorState.available, ChainTone.muted, PositionSyncCopy.indexOff);
+  }
+  if (sync.state == ReadAloudSyncState.enabled) {
+    return const EditionSyncStatus(ConnectorState.readAloudSynced, ChainTone.success, PositionSyncCopy.indexSynced);
+  }
+  // Without audio the EPUB copies are all there is to sync, so copies-only
+  // is the normal synced state.
+  final copiesOnly = _syncsEpubCopiesOnly(s);
+  if (copiesOnly && s.audiobook == null) {
+    return const EditionSyncStatus(ConnectorState.epubCopiesSynced, ChainTone.success, PositionSyncCopy.epubCopiesOnly);
+  }
+  final reason = _readAloudReason(sync);
+  if (copiesOnly) {
+    return EditionSyncStatus(
+      ConnectorState.readAloudPartial,
+      ChainTone.warning,
+      PositionSyncCopy.headerEpubOnly,
+      detail: '${PositionSyncCopy.epubCopiesDescription} $reason',
+    );
+  }
+  return EditionSyncStatus(
+    ConnectorState.readAloudIssue,
+    ChainTone.warning,
+    PositionSyncCopy.headerReasons[sync.unavailableReason ?? ReadAloudSyncReason.missingDuration]!,
+    detail: reason,
+  );
+}
+
+/// Editions upstream's read-aloud sync keeps together (the read-aloud, the
+/// audio, another EPUB copy), or null when it has nothing to sync.
+int? readAlongSyncCount(SyncChainSnapshot s) {
+  if (s.readAlong == null || (s.audiobook == null && !_hasEpubCopy(s))) return null;
+  return 1 + (s.audiobook != null ? 1 : 0) + (_hasEpubCopy(s) ? 1 : 0);
+}
+
+/// What the Editions card's sync footer shows and what its switch flips, as
+/// upstream's useEditionSyncToggle picks: a book with a read-aloud uses
+/// upstream's read-aloud sync (no edition sync permission needed), one with
+/// only an ebook and audio the timing index; null for neither.
+class EditionSyncCard {
+  final bool on;
+  final bool acting;
+  final EditionSyncStatus status;
+
+  /// The index's percent while it is made, for the ring.
+  final double? progress;
+
+  /// The switch is upstream's read-aloud sync rather than the index's.
+  final bool readAlong;
+  const EditionSyncCard({
+    required this.on,
+    required this.status,
+    this.acting = false,
+    this.progress,
+    this.readAlong = false,
+  });
+
+  /// How the editions are kept together, beside the footer's heading.
+  String get via => readAlong
+      ? PositionSyncCopy.qualifierViaReadAloud
+      : status.state == ConnectorState.indexViaWhisper
+      ? PositionSyncCopy.qualifierViaWhisper
+      : PositionSyncCopy.qualifierViaTimings;
+
+  factory EditionSyncCard.index(SyncChainIndex i) => EditionSyncCard(
+    on: i.on,
+    acting: i.acting,
+    status: editionSyncStatus(i),
+    progress: i.running ? i.progress : null,
+  );
+}
+
+EditionSyncCard? editionSyncCard(SyncChainSnapshot s, {bool readAloudSaving = false}) {
+  if (readAlongSyncCount(s) != null) {
+    return EditionSyncCard(
+      on: s.readAloud.mode != ReadAloudSyncMode.disabled,
+      acting: readAloudSaving,
+      status: readAlongSyncStatus(s),
+      readAlong: true,
+    );
+  }
+  final i = s.index;
+  return i != null && usesTimingIndex(s) ? EditionSyncCard.index(i) : null;
+}
+
+List<ChainAction> _present(List<ChainAction?> actions) => [for (final a in actions) if (a != null) a,
+];
+
+/// The plain EPUB and the audio, joined by the timing index; its switch is
+/// the book's edition sync.
+ChainConnectorRow _indexConnector(SyncChainIndex i) {
+  final status = editionSyncStatus(i);
+  final off = !i.on;
+  return _connectorRow(
+    SyncEdition.ebook,
+    SyncEdition.audiobook,
+          state: status.state,
+          tone: status.tone,
+          pill: off ? PositionSyncCopy.syncDisabled : status.label,
+    qualifier: off
+        ? PositionSyncCopy.syncDisabled
+        : status.state == ConnectorState.indexSynced
+        ? PositionSyncCopy.qualifierViaTimings
+        : null,
+          explainer: PositionSyncCopy.explainTimings,
+    toggle: ChainSwitch(
+      on: i.on,
+      disabled: i.acting,
+      onAction: ChainActionId.enableIndexSync,
+      offAction: ChainActionId.disableIndexSync,
+    ),
+          note: status.detail,
+          actions: status.actions,
+  );
 }
 
 String _readAloudReason(ReadAloudSync sync) {
   final reason = sync.unavailableReason ?? ReadAloudSyncReason.missingDuration;
   if (reason == ReadAloudSyncReason.durationMismatch) {
     return PositionSyncCopy.durationMismatch(
-        syncDuration(sync.audioDurationSeconds), syncDuration(sync.overlayDurationSeconds));
+        syncDuration(sync.audioDurationSeconds), syncDuration(sync.overlayDurationSeconds),
+    );
   }
   return PositionSyncCopy.syncReasons[reason]!;
 }
@@ -1097,7 +1303,8 @@ ChainConnectorRow _readAloudConnector(SyncChainSnapshot s) {
         pill: PositionSyncCopy.syncDisabled,
         qualifier: PositionSyncCopy.syncDisabled,
         explainer: PositionSyncCopy.explainReadAlongAudio,
-        toggle: toggle);
+        toggle: toggle,
+    );
   }
   // With a plain EPUB on the spine its own connector shows the copies
   // syncing; this one is then only the audio half.
@@ -1108,7 +1315,8 @@ ChainConnectorRow _readAloudConnector(SyncChainSnapshot s) {
         pill: PositionSyncCopy.syncPartial,
         explainer: PositionSyncCopy.epubCopiesDescription,
         toggle: toggle,
-        note: _readAloudReason(sync));
+        note: _readAloudReason(sync),
+    );
   }
   if (sync.state == ReadAloudSyncState.unavailable) {
     return _connectorRow(from, to,
@@ -1116,7 +1324,8 @@ ChainConnectorRow _readAloudConnector(SyncChainSnapshot s) {
         tone: ChainTone.warning,
         pill: PositionSyncCopy.syncUnavailable,
         toggle: toggle,
-        note: _readAloudReason(sync));
+        note: _readAloudReason(sync),
+    );
   }
   return _connectorRow(from, to,
       state: ConnectorState.readAloudSynced,
@@ -1124,7 +1333,8 @@ ChainConnectorRow _readAloudConnector(SyncChainSnapshot s) {
       pill: PositionSyncCopy.syncEnabled,
       qualifier: PositionSyncCopy.qualifierDirect,
       explainer: PositionSyncCopy.explainReadAlongAudio,
-      toggle: toggle);
+      toggle: toggle,
+  );
 }
 
 /// Upstream's read-aloud sync keeps the plain EPUB in step with the
@@ -1141,7 +1351,8 @@ ChainConnectorRow _epubCopiesConnector(SyncChainSnapshot s) {
         pill: PositionSyncCopy.syncDisabled,
         qualifier: PositionSyncCopy.syncDisabled,
         explainer: PositionSyncCopy.epubCopiesDescription,
-        toggle: toggle);
+        toggle: toggle,
+    );
   }
   if (sync.state == ReadAloudSyncState.unavailable && !_syncsEpubCopiesOnly(s)) {
     return _connectorRow(from, to,
@@ -1149,7 +1360,8 @@ ChainConnectorRow _epubCopiesConnector(SyncChainSnapshot s) {
         tone: ChainTone.warning,
         pill: PositionSyncCopy.syncUnavailable,
         toggle: toggle,
-        note: _readAloudReason(sync));
+        note: _readAloudReason(sync),
+    );
   }
   return _connectorRow(from, to,
       state: ConnectorState.epubCopiesSynced,
@@ -1161,7 +1373,8 @@ ChainConnectorRow _epubCopiesConnector(SyncChainSnapshot s) {
           ? PositionSyncCopy.qualifierDirect
           : PositionSyncCopy.epubCopiesOnly,
       explainer: PositionSyncCopy.epubCopiesDescription,
-      toggle: toggle);
+      toggle: toggle,
+  );
 }
 
 /// Leads into the read-aloud slot: nothing to sync yet, so a dashed rail
@@ -1171,7 +1384,8 @@ ChainConnectorRow _noReadAlongConnector() => _connectorRow(SyncEdition.readAlong
     tone: ChainTone.muted,
     pill: PositionSyncCopy.offNoReadAlong,
     qualifier: PositionSyncCopy.offNoReadAlong,
-    explainer: PositionSyncCopy.explainReadAlongAudio);
+    explainer: PositionSyncCopy.explainReadAlongAudio,
+);
 
 String _absExplain(AbsDirection d) => switch (d) {
       AbsDirection.twoWay => PositionSyncCopy.explainAbsTwoWay,
@@ -1220,7 +1434,8 @@ ChainConnectorRow _absLinkedConnector(SyncChainAbs abs, AbsLink link) {
         ConnectorState.absReceiving => const [ChainAction(ChainActionId.absPull, PositionSyncCopy.actionAbsUseNow)],
         _ => const [],
       },
-      absDetails: true);
+      absDetails: true,
+  );
 }
 
 ChainConnectorRow _absOffConnector(AbsLink? link) {
@@ -1234,7 +1449,8 @@ ChainConnectorRow _absOffConnector(AbsLink? link) {
           qualifier: qualifier,
           explainer: link != null ? _absExplain(link.direction) : null,
           toggle: ChainSwitch(on: false, disabled: reason != null, onAction: onAction),
-          disabledReason: reason);
+          disabledReason: reason,
+  );
   if (link?.pausedReason == AbsPausedReason.positionSyncOff) {
     return off(PositionSyncCopy.offSyncOffInSettings, null, PositionSyncCopy.offSyncOffInSettings);
   }
@@ -1250,9 +1466,9 @@ ChainConnectorRow _absConnector(SyncChainSnapshot s, SyncChainAbs abs) {
 }
 
 // Order: ebook, read-aloud, the audio group, so each upstream pair sits side
-// by side. Without a read-aloud the ebook meets the audio through Whisper and
-// the read-aloud slot trails the audio group. A connector only joins two
-// files that are both there.
+// by side. Without a read-aloud the ebook meets the audio through the timing
+// index (where edition sync reaches the book) and the read-aloud slot trails
+// the audio group. A connector only joins two files that are both there.
 
 List<ChainRow> _audioGroup(SyncChainSnapshot s, SyncChainEdition audiobook) {
   final abs = s.abs;
@@ -1307,13 +1523,15 @@ ChainReadAloudSlotRow _jobSlot(SyncChainReadAloudSlot slot, SyncChainReadAloudJo
                   ? PositionSyncCopy.queuedTitle
                   : PositionSyncCopy.queueAhead(job.queuePosition!),
           cancel: cancel,
-          progress: (stage: job.stage, percent: null));
+          progress: (stage: job.stage, percent: null),
+      );
     case ReadAloudJobStatus.processing:
       return _slotRow(slot,
           variant: ReadAloudSlotVariant.processing,
           note: job.stopping ? PositionSyncCopy.stoppingTitle : readAloudStageLabel(job.stage),
           cancel: cancel,
-          progress: (stage: job.stage, percent: job.progress.clamp(0, 100).round()));
+          progress: (stage: job.stage, percent: job.progress.clamp(0, 100).round()),
+      );
     case ReadAloudJobStatus.awaitingReview:
       return _slotRow(slot, variant: ReadAloudSlotVariant.review, note: PositionSyncCopy.reviewTitle, action: review);
     default:
@@ -1322,7 +1540,8 @@ ChainReadAloudSlotRow _jobSlot(SyncChainReadAloudSlot slot, SyncChainReadAloudJo
           variant: ReadAloudSlotVariant.failed,
           note: job.error ?? PositionSyncCopy.jobErrorUnknown,
           action: retry ?? review,
-          secondary: retry != null ? review : null);
+          secondary: retry != null ? review : null,
+      );
   }
 }
 
@@ -1338,7 +1557,8 @@ ChainReadAloudSlotRow? _readAloudSlot(SyncChainSnapshot s) {
         variant: ReadAloudSlotVariant.notCreated,
         note: PositionSyncCopy.slotNotCreated,
         action: const ChainAction(ChainActionId.createReadAloud, PositionSyncCopy.createReadAloud),
-        secondary: const ChainAction(ChainActionId.modifyReadAloud, PositionSyncCopy.actionModify));
+        secondary: const ChainAction(ChainActionId.modifyReadAloud, PositionSyncCopy.actionModify),
+    );
   }
   if (entry is ReadAloudEntryUnavailable && entry.reason != ReadAloudReason.jobActive) {
     return _slotRow(slot, variant: ReadAloudSlotVariant.unavailable, note: entry.message);
@@ -1370,7 +1590,7 @@ List<ChainRow> _orderedRows(SyncChainSnapshot s) {
   return [
     if (ebook != null) _fileCard(s, SyncEdition.ebook, ebook),
     if (audiobook != null) ...[
-      if (ebook != null) _alignmentConnector(s),
+      if (ebook != null && s.index != null) _indexConnector(s.index!),
       ..._audioGroup(s, audiobook),
     ],
     ..._readAloudSlotRows(s),
@@ -1382,26 +1602,27 @@ List<ChainRow> _orderedRows(SyncChainSnapshot s) {
 bool _copiesOnlyWithoutAudio(SyncChainSnapshot s) => s.audiobook == null && _syncsEpubCopiesOnly(s);
 
 int? _headerPriority(SyncChainSnapshot s) {
-  final align = usesWhisper(s) ? _alignmentState(s.alignment) : null;
+  final index = usesTimingIndex(s) ? editionSyncStatus(s.index!).state : null;
   final link = s.abs?.link;
   final abs = _absIsCard(s) && link != null ? _absState(link, s.abs!.live) : null;
   final readAloudIssue = s.readAlong != null &&
       (s.audiobook != null || s.ebook != null) &&
       s.readAloud.state == ReadAloudSyncState.unavailable &&
       !_copiesOnlyWithoutAudio(s);
-  if (align == _AlignmentState.alignmentFailed) return 1;
-  if (align == _AlignmentState.outOfDate ||
+  if (index == ConnectorState.indexFailed) return 1;
+  if (index == ConnectorState.indexStale ||
+      index == ConnectorState.indexViaWhisper ||
       readAloudIssue ||
       abs == ConnectorState.absUnreachable ||
       abs == ConnectorState.absDiverged) {
     return 2;
   }
-  if (align == _AlignmentState.aligning || align == _AlignmentState.rebuilding) return 3;
+  if (index == ConnectorState.indexRunning) return 3;
   return null;
 }
 
 int countInSync(SyncChainSnapshot s) {
-  final pair = usesWhisper(s) && _alignmentState(s.alignment) == _AlignmentState.ready;
+  final pair = usesTimingIndex(s) && s.index!.on && s.index!.status == EditionSyncIndexStatus.ready;
   final readAloudAudio = _hasReadAloudPair(s) && s.readAloud.state == ReadAloudSyncState.enabled;
   final copies = s.ebook != null &&
       s.readAlong != null &&
@@ -1422,7 +1643,7 @@ SyncChain buildSyncChain(SyncChainSnapshot input) {
   final header = switch (priority) {
     1 => const SyncChainHeader(ChainTone.destructive, PositionSyncCopy.headerNeedsAttention),
     2 => const SyncChainHeader(ChainTone.warning, PositionSyncCopy.headerCheckSync),
-    3 => const SyncChainHeader(ChainTone.info, PositionSyncCopy.headerAligning),
+    3 => const SyncChainHeader(ChainTone.info, PositionSyncCopy.headerIndexing),
     _ => inSync >= 2
         ? SyncChainHeader(ChainTone.success, PositionSyncCopy.headerInSync(inSync, present))
         : const SyncChainHeader(ChainTone.muted, PositionSyncCopy.headerNotSyncing),

@@ -9,6 +9,9 @@ part of '../book_detail_sheet.dart';
 /// Releases the sync state each open sheet started loading, run when it closes.
 final _forkSyncPrefetch = Expando<VoidCallback>();
 
+/// The sync state each open sheet holds, which the Editions card draws from.
+final _forkSyncControllers = Expando<PositionSyncController>();
+
 /// The item each open sheet was seeded with, until `_loadItem` replaces it.
 final _forkSeeds = Expando<Map<String, dynamic>>();
 
@@ -35,7 +38,9 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
     }
     c.filesChanged.addListener(onFiles);
     lib.addListener(onLibrary);
+    _forkSyncControllers[this] = c;
     _forkSyncPrefetch[this] = () {
+      _forkSyncControllers[this] = null;
       c.filesChanged.removeListener(onFiles);
       lib.removeListener(onLibrary);
       sync.release();
@@ -43,6 +48,8 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
   }
 
   void _forkReleaseSync() => _forkSyncPrefetch[this]?.call();
+
+  PositionSyncController? get _forkSyncController => _forkSyncControllers[this];
 
   /// Paints the sheet at once from what the app already holds for this book
   /// (its full detail if any Home card fetched it, else the last card built

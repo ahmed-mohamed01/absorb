@@ -1,7 +1,7 @@
 part of '../api_service.dart';
 
 // Fork-owned: BookOrbit position sync over the server's own API for one
-// book's files (reading alignment, upstream's read-aloud sync and generator,
+// book's files (edition sync, upstream's read-aloud sync and generator,
 // Audiobookshelf sync) and its wire models. The server does the matching and
 // building; this only asks. The hook is the `part` line in api_service.dart.
 // See FORK_NOTES.md.
@@ -33,49 +33,71 @@ class PositionSyncRequestFailure implements Exception {
   String toString() => 'PositionSyncRequestFailure($status): $message';
 }
 
-class AlignmentStatusWire {
-  final AlignmentStatus status;
-  final int? samplesDone;
-  final int? samplesTotal;
-  final String? builtAt;
+/// `GET /edition-sync/books/:id/state`: the reader's edition sync switch for
+/// the book and where its timing index stands.
+class EditionSyncBookStateWire {
+  final bool eligible;
+  final bool hasReadAlong;
+  final bool syncEnabled;
+  final bool pinned;
+  final bool runActive;
+  final EditionSyncIndexStatus status;
+  final String? stage;
+  final double? progress;
+  final int? queuePosition;
+  final String? nextRunAt;
   final String? error;
-  final bool stale;
-  const AlignmentStatusWire({
-    this.status = AlignmentStatus.none,
-    this.samplesDone,
-    this.samplesTotal,
-    this.builtAt,
+  final bool whisperFallback;
+  final bool canRunNow;
+  final bool canRetry;
+
+  /// Why sync is off for the book (effectiveReason); null while it's on.
+  final EditionSyncOffReason? offReason;
+  const EditionSyncBookStateWire({
+    this.eligible = false,
+    this.hasReadAlong = false,
+    this.syncEnabled = false,
+    this.pinned = false,
+    this.runActive = false,
+    this.status = EditionSyncIndexStatus.none,
+    this.stage,
+    this.progress,
+    this.queuePosition,
+    this.nextRunAt,
     this.error,
-    this.stale = false,
+    this.whisperFallback = false,
+    this.canRunNow = false,
+    this.canRetry = false,
+    this.offReason,
   });
 
-  /// A 'none' payload carries only its status.
-  factory AlignmentStatusWire.fromJson(Map<String, dynamic> j) {
-    final status = _psEnum(AlignmentStatus.values, j['status']) ?? AlignmentStatus.none;
-    if (status == AlignmentStatus.none) return const AlignmentStatusWire();
-    return AlignmentStatusWire(
-      status: status,
-      samplesDone: _psInt(j['samplesDone']),
-      samplesTotal: _psInt(j['samplesTotal']),
-      builtAt: _psString(j['builtAt']),
-      error: _psString(j['error']),
-      stale: j['stale'] == true,
+  factory EditionSyncBookStateWire.fromJson(Map<String, dynamic> j) {
+    final index = _psMap(j['index']) ?? const {};
+    return EditionSyncBookStateWire(
+      eligible: j['eligible'] == true,
+      hasReadAlong: j['hasReadAlong'] == true,
+      syncEnabled: j['syncEnabled'] == true,
+      pinned: j['pinned'] == true,
+      runActive: j['runActive'] == true,
+      status: _psEnum(EditionSyncIndexStatus.values, index['status']) ?? EditionSyncIndexStatus.none,
+      stage: _psString(index['stage']),
+      progress: _psDouble(index['progress']),
+      queuePosition: _psInt(index['queuePosition']),
+      nextRunAt: _psString(index['nextRunAt']),
+      error: _psString(index['error']),
+      whisperFallback: index['whisperFallback'] == true,
+      canRunNow: j['canRunNow'] == true,
+      canRetry: j['canRetry'] == true,
+      offReason: j['syncEnabled'] == true ? null : _psEnum(EditionSyncOffReason.values, j['effectiveReason']),
     );
   }
-}
 
-/// The answer to a build request: the status it started with, or why it
-/// could not start.
-class AlignmentBuildWire {
-  final AlignmentStatus? started;
-  final AlignmentBlock? blocked;
-  const AlignmentBuildWire({this.started, this.blocked});
-
-  factory AlignmentBuildWire.fromJson(Map<String, dynamic> j) {
-    final blocked = _psEnum(AlignmentBlock.values, j['status']);
-    if (blocked != null) return AlignmentBuildWire(blocked: blocked);
-    return AlignmentBuildWire(started: _psEnum(AlignmentStatus.values, j['status']) ?? AlignmentStatus.none);
-  }
+  /// Polled while it can change on its own: indexing, waiting or out of date.
+  bool get moving =>
+      syncEnabled &&
+      (status == EditionSyncIndexStatus.running ||
+          status == EditionSyncIndexStatus.queued ||
+          status == EditionSyncIndexStatus.stale);
 }
 
 /// A book's `readAloudSync`. A server before the read-aloud sync has none,
@@ -169,7 +191,8 @@ class PositionSyncBookInfo {
       : PositionSyncEditionFiles(
           title: _title(files),
           formatName: formatName,
-          fileIds: [for (final f in files) if (_psInt(f['id']) != null) _psInt(f['id'])!],
+          fileIds: [for (final f in files) if (_psInt(f['id']) != null) _psInt(f['id'])!,
+          ],
           sizeBytes: files.fold(0, (sum, f) => sum + (_psInt(f['sizeBytes']) ?? 0)),
         );
 
@@ -301,12 +324,14 @@ class ReadAloudCapabilityWire {
         workerConfigured: j['workerConfigured'] == true,
         eligible: j['eligible'] == true,
         reason: _psEnum(ReadAloudReason.values, j['reason']),
-        supportedLanguages: [for (final l in (j['supportedLanguages'] as List? ?? const [])) if (l is String) l],
+        supportedLanguages: [for (final l in (j['supportedLanguages'] as List? ?? const [])) if (l is String) l,
+    ],
         epubFiles: [
           for (final f in _psMaps(j['epubFiles']))
             if (_psInt(f['id']) != null) ReadAloudCandidateFileWire(id: _psInt(f['id'])!, filename: _psString(f['filename']) ?? ''),
         ],
-        audioFileIds: [for (final f in _psMaps(j['audioFiles'])) if (_psInt(f['id']) != null) _psInt(f['id'])!],
+        audioFileIds: [for (final f in _psMaps(j['audioFiles'])) if (_psInt(f['id']) != null) _psInt(f['id'])!,
+    ],
         existingReadAlongs: (j['existingReadAlongs'] as List?)?.length ?? 0,
         latestJob: ReadAloudJobWire.fromJson(_psMap(j['latestJob'])),
       );
@@ -321,10 +346,12 @@ class ReadAloudRequest {
   /// 'sentence' or 'word'.
   final String granularity;
   const ReadAloudRequest(
-      {required this.epubFileId, required this.audioFileIds, required this.language, this.granularity = 'sentence'});
+      {required this.epubFileId, required this.audioFileIds, required this.language, this.granularity = 'sentence',
+  });
 
   Map<String, dynamic> toJson() =>
-      {'epubFileId': epubFileId, 'audioFileIds': audioFileIds, 'language': language, 'granularity': granularity};
+      {'epubFileId': epubFileId, 'audioFileIds': audioFileIds, 'language': language, 'granularity': granularity,
+  };
 }
 
 class AbsSyncLinkWire {
@@ -397,7 +424,8 @@ class AbsBookStateWire {
   final String absTitle;
   final String? absAuthorName;
   final String? absLibraryName;
-  const AbsBookStateWire({required this.absLibraryItemId, required this.absTitle, this.absAuthorName, this.absLibraryName});
+  const AbsBookStateWire({required this.absLibraryItemId, required this.absTitle, this.absAuthorName, this.absLibraryName,
+  });
 
   factory AbsBookStateWire.fromJson(Map<String, dynamic> j) => AbsBookStateWire(
         absLibraryItemId: _psString(j['absLibraryItemId']) ?? '',
@@ -408,11 +436,17 @@ class AbsBookStateWire {
 }
 
 class PositionSyncPermissions {
-  final bool align;
+  /// The fork's edition sync reaches this reader: permitted, on for the
+  /// server and on for the account.
+  final bool editionSync;
   final bool generate;
   final bool abs;
-  const PositionSyncPermissions({this.align = false, this.generate = false, this.abs = false});
+  const PositionSyncPermissions({this.editionSync = false, this.generate = false, this.abs = false});
 }
+
+/// Each service's last edition sync settings answer, so one failed read
+/// keeps it.
+final _editionSyncWas = Expando<bool>();
 
 extension ForkPositionSyncApi on BookOrbitApiService {
   /// Runs [call], turning a BookOrbit error answer into a
@@ -432,12 +466,36 @@ extension ForkPositionSyncApi on BookOrbitApiService {
   Future<PositionSyncBookInfo> positionSyncBookInfo(int bookId, {bool fresh = false}) =>
       _ps(() async => PositionSyncBookInfo.fromDetail(await _detail('$bookId', fresh: fresh)));
 
-  Future<PositionSyncPermissions> positionSyncPermissions() async => PositionSyncPermissions(
-        // One /auth/me per ten minutes, not one per sheet (bookorbit_perf.dart).
-        align: await _forkLoadPermissions().then((_) => _can('library_edit_metadata')),
+  Future<PositionSyncPermissions> positionSyncPermissions() async {
+    // One /auth/me per ten minutes, not one per sheet (bookorbit_perf.dart).
+    await _forkLoadPermissions();
+    return PositionSyncPermissions(
+      editionSync: await _can('edition_sync') && await _editionSyncOn(),
         generate: await _can('library_generate_read_aloud'),
         abs: await _can('audiobookshelf_sync'),
       );
+  }
+
+  /// `GET /edition-sync/settings`'s effectiveEnabled, read once per ten
+  /// minutes like the permissions. A server without edition sync (404, also
+  /// remembered for ten minutes) counts as off; a failed read keeps the last
+  /// answer, or off before there is one.
+  Future<bool> _editionSyncOn() async {
+    try {
+      final r = await _cached('fork-edition-sync-settings', const Duration(minutes: 10), () async {
+        try {
+          return _psMap(await _boGet('/edition-sync/settings')) ?? const <String, dynamic>{};
+        } on _BoHttpError catch (e) {
+          if (e.status == 404) return const <String, dynamic>{};
+          rethrow;
+        }
+      });
+      return _editionSyncWas[this] = r['effectiveEnabled'] == true;
+    } catch (e) {
+      debugPrint('[PositionSync] edition sync settings: $e');
+      return _editionSyncWas[this] ?? false;
+    }
+  }
 
   /// Each file's progress and, for a book with audio, the playback position.
   Future<PositionSyncProgressWire> positionSyncProgress(int bookId) => _ps(() async {
@@ -465,19 +523,26 @@ extension ForkPositionSyncApi on BookOrbitApiService {
   /// where a job is reviewed.
   String readAloudReviewUrl(int bookId) => '$_cleanBaseUrl/book/$bookId?tab=files&readAloud=details';
 
-  // Reading alignment.
+  // The fork's edition sync.
 
-  Future<AlignmentStatusWire> alignmentStatus(int bookId) => _ps(() async => AlignmentStatusWire.fromJson(
-      await _boGet('/reading-alignment/books/$bookId/alignment') as Map<String, dynamic>));
+  Future<EditionSyncBookStateWire> editionSyncState(int bookId) => _ps(() async =>
+        EditionSyncBookStateWire.fromJson(_psMap(
+      await _boGet('/edition-sync/books/$bookId/state')) ?? const {}),
+  );
 
-  Future<AlignmentBuildWire> buildAlignment(int bookId, {bool force = false}) => _ps(() async =>
-      AlignmentBuildWire.fromJson(_psMap(
-              await _boPost('/reading-alignment/books/$bookId/build${force ? '?force=true' : ''}')) ??
-          const {}));
+  Future<EditionSyncBookStateWire> setEditionSync(int bookId, bool on) => _ps(() async => EditionSyncBookStateWire.fromJson(_psMap(
+              await _boPatch('/edition-sync/books/$bookId/state', {'syncEnabled': on})) ??
+          const {},
+    ),
+  );
 
-  Future<void> cancelAlignment(int bookId) => _ps(() async {
-        await _boDelete('/reading-alignment/books/$bookId/build');
-      });
+  Future<EditionSyncBookStateWire> runEditionSyncNow(int bookId) => _ps(() async => EditionSyncBookStateWire.fromJson(_psMap(await _boPost('/edition-sync/books/$bookId/run')) ?? const {}),
+  );
+
+  Future<EditionSyncBookStateWire> retryEditionSync(int bookId) => _ps(
+    () async =>
+        EditionSyncBookStateWire.fromJson(_psMap(await _boPost('/edition-sync/books/$bookId/retry')) ?? const {}),
+  );
 
   // Upstream's read-aloud sync and generator.
 
@@ -493,19 +558,24 @@ extension ForkPositionSyncApi on BookOrbitApiService {
       });
 
   Future<ReadAloudCapabilityWire> readAloudCapability(int bookId) => _ps(() async =>
-      ReadAloudCapabilityWire.fromJson(await _boGet('/books/$bookId/read-aloud') as Map<String, dynamic>));
+      ReadAloudCapabilityWire.fromJson(await _boGet('/books/$bookId/read-aloud') as Map<String, dynamic>),
+  );
 
   Future<ReadAloudJobWire?> readAloudJob(String jobId) =>
-      _ps(() async => ReadAloudJobWire.fromJson(_psMap(await _boGet('/read-aloud-jobs/${Uri.encodeComponent(jobId)}'))));
+      _ps(() async => ReadAloudJobWire.fromJson(_psMap(await _boGet('/read-aloud-jobs/${Uri.encodeComponent(jobId)}'))),
+  );
 
   Future<ReadAloudJobWire?> createReadAloudJob(int bookId, ReadAloudRequest request) => _ps(() async =>
-      ReadAloudJobWire.fromJson(_psMap(await _boPost('/books/$bookId/read-aloud-jobs', request.toJson()))));
+      ReadAloudJobWire.fromJson(_psMap(await _boPost('/books/$bookId/read-aloud-jobs', request.toJson()))),
+  );
 
   Future<ReadAloudJobWire?> cancelReadAloudJob(String jobId) =>
-      _ps(() async => ReadAloudJobWire.fromJson(_psMap(await _boDelete('/read-aloud-jobs/${Uri.encodeComponent(jobId)}'))));
+      _ps(() async => ReadAloudJobWire.fromJson(_psMap(await _boDelete('/read-aloud-jobs/${Uri.encodeComponent(jobId)}'))),
+  );
 
   Future<ReadAloudJobWire?> retryReadAloudJob(String jobId) => _ps(() async =>
-      ReadAloudJobWire.fromJson(_psMap(await _boPost('/read-aloud-jobs/${Uri.encodeComponent(jobId)}/retry'))));
+      ReadAloudJobWire.fromJson(_psMap(await _boPost('/read-aloud-jobs/${Uri.encodeComponent(jobId)}/retry'))),
+  );
 
   /// The reader's saved narration language, or null; never throws, since it
   /// only fills a default.
@@ -531,12 +601,15 @@ extension ForkPositionSyncApi on BookOrbitApiService {
       });
 
   Future<AbsSyncLiveWire> absLive(String absLibraryItemId) => _ps(() async =>
-      AbsSyncLiveWire.fromJson(await _boGet('${_absPath(absLibraryItemId)}/live') as Map<String, dynamic>));
+      AbsSyncLiveWire.fromJson(await _boGet('${_absPath(absLibraryItemId)}/live') as Map<String, dynamic>),
+  );
 
   /// [direction] is 'push' or 'pull'.
   Future<AbsSyncLiveWire> absReconcile(String absLibraryItemId, String direction) => _ps(() async =>
       AbsSyncLiveWire.fromJson(
-          await _boPost('${_absPath(absLibraryItemId)}/reconcile', {'direction': direction}) as Map<String, dynamic>));
+          await _boPost('${_absPath(absLibraryItemId)}/reconcile', {'direction': direction}) as Map<String, dynamic>,
+    ),
+  );
 
   Future<void> absConfirm(String absLibraryItemId) => _ps(() async {
         await _boPost('${_absPath(absLibraryItemId)}/confirm');
@@ -561,7 +634,8 @@ extension ForkPositionSyncApi on BookOrbitApiService {
           'page': 0,
           'pageSize': pageSize,
           'q': query.isEmpty ? null : query,
-        }));
+        }),
+    );
         return [for (final i in _psMaps(r?['items'])) AbsBookStateWire.fromJson(i)];
       });
 }

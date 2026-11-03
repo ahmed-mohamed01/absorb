@@ -477,6 +477,30 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   }) {
     final onAbsorbing = lib.isOnAbsorbingList(widget.itemId);
     final syncPair = !isEbookOnly && ebookFile != null && ebookExtFromFile(ebookFile) == '.epub';
+    final syncButton = ForkSyncButton.shouldShow(auth, lib, widget.itemId);
+    Widget? download;
+    if (!isEbookOnly) {
+      download = DownloadWideButton(itemId: widget.itemId, coverUrl: _coverUrl, title: title, author: authorName, accent: accent, iconOnly: true);
+    } else if (!_lookingForNarration && ebookFile != null && canReadEbook(ebookFile)) {
+      download = ListenableBuilder(listenable: DownloadService(), builder: (_, __) {
+        final saved = DownloadService().isDownloaded(widget.itemId);
+        if (lib.isOffline && !saved && !_ebookOfflineDownloading) return const SizedBox.shrink();
+        final dlGreen = Theme.of(context).brightness == Brightness.dark ? Colors.greenAccent : Colors.green.shade700;
+        return IconButton(
+          tooltip: saved ? l.saved : l.ebookDownload,
+          onPressed: _ebookOfflineDownloading
+              ? null
+              : () => saved ? _removeEbookOffline(context) : _downloadEbookOffline(context, auth, ebookFile, title),
+          icon: _ebookOfflineDownloading
+              ? SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: accent))
+              : Icon(saved ? Icons.download_done_rounded : Icons.download_rounded, color: saved ? dlGreen : null),
+        );
+      });
+    }
+    // The Editions card has a download button per edition, so the top one
+    // goes once that card shows its rows, and stays while it loads or fails
+    // or while the card is away (offline).
+    final cardSync = syncButton ? _forkSyncController : null;
     return Row(children: [
       IconButton(
         tooltip: MaterialLocalizations.of(context).backButtonTooltip,
@@ -484,27 +508,18 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         icon: const Icon(Icons.arrow_back_ios_new_rounded),
       ),
       const Spacer(),
-      if (!isEbookOnly)
-        DownloadWideButton(itemId: widget.itemId, coverUrl: _coverUrl, title: title, author: authorName, accent: accent, iconOnly: true)
-      else if (!_lookingForNarration && ebookFile != null && canReadEbook(ebookFile))
-        ListenableBuilder(listenable: DownloadService(), builder: (_, __) {
-          final saved = DownloadService().isDownloaded(widget.itemId);
-          if (lib.isOffline && !saved && !_ebookOfflineDownloading) return const SizedBox.shrink();
-          final dlGreen = Theme.of(context).brightness == Brightness.dark ? Colors.greenAccent : Colors.green.shade700;
-          return IconButton(
-            tooltip: saved ? l.saved : l.ebookDownload,
-            onPressed: _ebookOfflineDownloading
-                ? null
-                : () => saved ? _removeEbookOffline(context) : _downloadEbookOffline(context, auth, ebookFile, title),
-            icon: _ebookOfflineDownloading
-                ? SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: accent))
-                : Icon(saved ? Icons.download_done_rounded : Icons.download_rounded, color: saved ? dlGreen : null),
-          );
-        }),
+      if (download != null)
+        if (cardSync == null)
+          download
+        else
+          ListenableBuilder(
+            listenable: cardSync,
+            builder: (_, __) => forkEditionsCardShows(cardSync) ? const SizedBox.shrink() : download!,
+          ),
       // On BookOrbit, position sync: how the book's own files stand (the sheet
       // BookOrbit's own sync button opens). Audiobookshelf has no such sync,
       // so there it lines up the audiobook and its EPUB on the phone.
-      if (ForkSyncButton.shouldShow(auth, lib, widget.itemId))
+      if (syncButton)
         ForkSyncButton(
           key: ValueKey('fork-sync-${widget.itemId}'),
           itemId: widget.itemId, accent: accent, api: auth.apiService as BookOrbitApiService,

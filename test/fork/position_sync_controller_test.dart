@@ -125,7 +125,17 @@ void main() {
       Object? body;
       switch ('${req.method} $path') {
         case 'GET /auth/me':
-          body = {'permissions': ['library_generate_read_aloud', 'library_edit_metadata']};
+          body = {'permissions': ['library_generate_read_aloud', 'edition_sync']};
+        case 'GET /edition-sync/settings':
+          body = {'enabled': true, 'effectiveEnabled': true, 'disabledReason': null, 'bookSyncMode': 'all_eligible'};
+        case 'GET /edition-sync/books/50/state':
+          body = {
+            'bookId': 50,
+            'eligible': true,
+            'hasReadAlong': false,
+            'syncEnabled': true,
+            'index': {'status': 'ready', 'whisperFallback': false},
+          };
         case 'GET /books/50':
           body = {
             'id': 50,
@@ -140,8 +150,6 @@ void main() {
           body = [
             {'fileId': 1, 'percentage': 40},
           ];
-        case 'GET /reading-alignment/books/50/alignment':
-          body = {'status': 'ready', 'builtAt': 'x'};
         case 'GET /books/50/read-aloud':
           body = {
             'workerConfigured': true,
@@ -177,6 +185,8 @@ void main() {
     expect(c.snapshot.ebook?.progress, 40);
     expect(c.chain.header.label, '2 of 2 in sync');
 
+    expect(c.index?.status, EditionSyncIndexStatus.ready);
+
     expect(await c.createReadAloud(), isTrue);
     expect(created, {'epubFileId': 1, 'audioFileIds': [2], 'language': 'en', 'granularity': 'sentence'});
     expect(c.creating, isTrue);
@@ -185,6 +195,135 @@ void main() {
     expect(queued.variant, ReadAloudSlotVariant.queued);
     expect(queued.cancel?.id, ChainActionId.cancelReadAloud);
     expect(requests, contains('GET /books/50/read-aloud'));
+  });
+  /// A book with read-aloud sync off, on a server whose edition sync PATCH
+  /// works or fails.
+  Future<(PositionSyncController, List<String>)> editionSyncBook({
+    int id = 60,
+    bool enabled = false,
+    bool patchFails = false,
+    bool readAloudFails = false,
+    bool serverOff = false,
+  }) async {
+    final requests = <String>[];
+    var syncEnabled = enabled;
+    final client = MockClient((req) async {
+      final path = req.url.path.replaceFirst('/api/v1', '');
+      requests.add('${req.method} $path${req.body.isEmpty ? '' : ' ${req.body}'}');
+      Object? body;
+      Map<String, dynamic> state() => {
+            'eligible': true,
+            'hasReadAlong': false,
+            'syncEnabled': syncEnabled,
+            'effectiveReason': syncEnabled ? null : 'excluded',
+            'index': {'status': syncEnabled ? 'queued' : 'none'},
+            'canRunNow': true,
+          };
+      Map<String, dynamic> book(String mode) => {
+            'id': id,
+            'files': [
+              {'id': 1, 'role': 'primary', 'format': 'epub', 'sizeBytes': 10, 'filename': 'Book.epub'},
+              {'id': 2, 'role': 'content', 'format': 'm4b', 'sizeBytes': 20, 'filename': 'Book.m4b'},
+            ],
+            'readAloudSync': {'mode': mode, 'state': 'disabled'},
+          };
+      switch ('${req.method} ${path.replaceFirst('/$id', '/ID')}') {
+        case 'GET /auth/me':
+          body = {'permissions': ['edition_sync']};
+        case 'GET /edition-sync/settings':
+          body = {'effectiveEnabled': true};
+        case 'GET /edition-sync/books/ID/state':
+          body = state();
+        case 'PATCH /edition-sync/books/ID/state':
+          if (patchFails) return http.Response('{"message":"down"}', 500);
+          syncEnabled = !serverOff && (jsonDecode(req.body) as Map)['syncEnabled'] == true;
+          body = state();
+        case 'GET /books/ID':
+          body = book('disabled');
+        case 'PATCH /books/ID/read-aloud-sync':
+          if (readAloudFails) return http.Response('{"message":"down"}', 500);
+          body = book('auto');
+        case 'GET /books/ID/progress':
+          body = [];
+        default:
+          return http.Response('{"message":"no"}', 404);
+      }
+      return http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json'});
+    });
+    final service = BookOrbitApiService(baseUrl: 'https://bookorbit.test', token: 't', httpClient: client);
+    final c = PositionSyncController.acquire(service, id);
+    // Dropped at once, so the next test doesn't pick up this one parked.
+    addTearDown(() {
+      PositionSyncController.release(c);
+      PositionSyncController.disposeIdle();
+    });
+    await c.loadInitial();
+    return (c, requests);
+  }
+
+  test('turning edition sync on also turns read-aloud sync back on', () async {
+    final (c, requests) = await editionSyncBook();
+    expect(c.index?.on, isFalse);
+    expect(c.index?.offReason, EditionSyncOffReason.excluded);
+    expect(c.chain.rows.whereType<ChainConnectorRow>().single.toggle?.on, isFalse);
+
+    expect(await c.setIndexSync(true), isTrue);
+    expect(requests, contains('PATCH /edition-sync/books/60/state {"syncEnabled":true}'));
+    expect(requests, contains('PATCH /books/60/read-aloud-sync {"mode":"auto"}'));
+    expect(c.index?.on, isTrue);
+    expect(c.index?.status, EditionSyncIndexStatus.queued);
+    expect(c.pollingForTest, isTrue, reason: 'a queued index is polled');
+  });
+
+  test('a refused edition sync switch leaves read-aloud sync alone and says so', () async {
+    final (c, requests) = await editionSyncBook(id: 61, enabled: true, patchFails: true);
+    expect(c.index?.offReason, EditionSyncOffReason.readAloudSyncOff, reason: 'on, but read-aloud sync is off');
+    final notices = <PositionSyncNotice>[];
+    c.onNotice = notices.add;
+    expect(await c.setIndexSync(true), isFalse);
+    expect(requests.where((r) => r.startsWith('PATCH /books/61/read-aloud-sync')), isEmpty);
+    expect(notices.single.message, PositionSyncCopy.toastEditionSyncFailed);
+  });
+
+  test('turning edition sync on fails when read-aloud sync then refuses', () async {
+    final (c, requests) = await editionSyncBook(id: 62, readAloudFails: true);
+    expect(await c.setIndexSync(true), isFalse, reason: 'the card toasts on false');
+    expect(requests, contains('PATCH /books/62/read-aloud-sync {"mode":"auto"}'));
+    expect(c.index?.on, isFalse);
+  });
+
+  test('a server that keeps edition sync off leaves read-aloud sync alone', () async {
+    final (c, requests) = await editionSyncBook(id: 63, serverOff: true);
+    expect(await c.setIndexSync(true), isTrue);
+    expect(requests.where((r) => r.startsWith('PATCH /books/63/read-aloud-sync')), isEmpty);
+  });
+
+  test('an action that is not edition sync\'s sends nothing', () async {
+    final (c, requests) = await editionSyncBook(id: 64);
+    final before = requests.length;
+    expect(await c.runIndexAction(ChainActionId.cancelReadAloud), isFalse);
+    expect(requests.length, before);
+  });
+
+  test('a failed edition sync settings read keeps the last answer', () async {
+    var down = false;
+    final client = MockClient((req) async {
+      final path = req.url.path.replaceFirst('/api/v1', '');
+      if (path == '/auth/me') {
+        return http.Response(jsonEncode({'permissions': ['edition_sync']}), 200, headers: {'content-type': 'application/json'});
+      }
+      if (path == '/edition-sync/settings') {
+        if (down) return http.Response('{"message":"down"}', 503);
+        return http.Response(jsonEncode({'effectiveEnabled': true}), 200, headers: {'content-type': 'application/json'});
+      }
+      return http.Response('{"message":"no"}', 404);
+    });
+    final service = BookOrbitApiService(baseUrl: 'https://settings.test', token: 't', httpClient: client);
+    BookOrbitApiService.clearCaches();
+    expect((await service.positionSyncPermissions()).editionSync, isTrue);
+    BookOrbitApiService.clearCaches();
+    down = true;
+    expect((await service.positionSyncPermissions()).editionSync, isTrue);
   });
 }
 

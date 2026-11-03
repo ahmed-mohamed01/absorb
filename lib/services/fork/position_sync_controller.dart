@@ -8,10 +8,12 @@ import 'position_sync_chain.dart';
 
 // Fork-owned: loads, polls and acts on one BookOrbit book's position sync,
 // a port of BookOrbit's useSyncChainPanel and the composables it uses
-// (useReadingAlignment, useSyncChainReadAloud with upstream's useReadAloud,
-// the Audiobookshelf sync link). The sync button, the Editions card and the
-// sheet share one controller per book. It has no widgets: what an action
-// ends with goes to [onNotice], which the open sheet turns into a toast.
+// (useEditionSyncBookState and useEditionSyncToggle, useSyncChainReadAloud
+// with upstream's useReadAloud, the Audiobookshelf sync link). The sync
+// button, the Editions card and the sheet share one controller per book. It
+// has no widgets: what an action ends with goes to [onNotice], which the
+// open sheet turns into a toast; edition sync's actions also report whether
+// they went through, so the card can say so with the sheet closed.
 // See FORK_NOTES.md.
 
 enum PositionSyncNoticeKind { success, error, info }
@@ -29,17 +31,15 @@ class _Entry {
   _Entry(this.controller);
 }
 
-const _alignmentPoll = Duration(seconds: 3);
+// As useEditionSyncBookState: a queued book nobody is starting moves only
+// when a scheduled run reaches it.
+const _indexPoll = Duration(seconds: 10);
+const _indexQueuedPoll = Duration(seconds: 60);
 // A read-aloud runs for minutes to hours, so its job is read far less often;
 // one waiting for review only changes when someone reviews it.
 const _jobPoll = Duration(seconds: 5);
 const _reviewPoll = Duration(seconds: 30);
-// A build starts asynchronously, so the next reads can still show the row
-// from before it. This many are held as the optimistic status.
-const _maxAwaitBuildRowPolls = 5;
 const _searchDebounce = Duration(milliseconds: 250);
-
-bool _alignmentRunning(AlignmentStatus s) => s == AlignmentStatus.pending || s == AlignmentStatus.building;
 
 const _slotStatuses = {
   ReadAloudJobStatus.queued,
@@ -50,10 +50,12 @@ const _slotStatuses = {
 
 /// Reasons only an admin or a library change can clear: the slot stays out
 /// of the chain rather than saying so on every visit.
-const _hiddenReasons = {ReadAloudReason.workerNotConfigured, ReadAloudReason.singleFileLibrary, ReadAloudReason.noAudiobook};
+const _hiddenReasons = {ReadAloudReason.workerNotConfigured, ReadAloudReason.singleFileLibrary, ReadAloudReason.noAudiobook,
+};
 
 /// Upstream's resolveReadAloudEntry.
-ReadAloudEntry resolveReadAloudEntry({required bool enabled, ReadAloudCapabilityWire? capability, ReadAloudJobWire? job}) {
+ReadAloudEntry resolveReadAloudEntry({required bool enabled, ReadAloudCapabilityWire? capability, ReadAloudJobWire? job,
+}) {
   if (!enabled || capability == null || !capability.workerConfigured) return const ReadAloudEntryHidden();
   final reason = capability.reason;
   if (reason != null && _hiddenReasons.contains(reason)) return const ReadAloudEntryHidden();
@@ -142,7 +144,7 @@ class PositionSyncController extends ChangeNotifier {
   }
 
   static void _resume(PositionSyncController c) {
-    if (_alignmentRunning(c.alignment.status)) unawaited(c._alFetch());
+    if (c.editionSync?.moving == true) unawaited(c._indexFetch());
     if (c._job?.active == true) unawaited(c._refreshJob());
   }
 
@@ -158,8 +160,8 @@ class PositionSyncController extends ChangeNotifier {
     entry.refs--;
     if (entry.refs > 0) return;
     c._parked = true;
-    c._alTimer?.cancel();
-    c._alTimer = null;
+    c._indexTimer?.cancel();
+    c._indexTimer = null;
     c._jobTimer?.cancel();
     c._jobTimer = null;
     c._searchTimer?.cancel();
@@ -191,7 +193,7 @@ class PositionSyncController extends ChangeNotifier {
   bool get parkedForTest => _parked;
 
   @visibleForTesting
-  bool get pollingForTest => _alTimer != null || _jobTimer != null;
+  bool get pollingForTest => _indexTimer != null || _jobTimer != null;
 
   @visibleForTesting
   bool get disposedForTest => _disposed;
@@ -214,18 +216,11 @@ class PositionSyncController extends ChangeNotifier {
   PositionSyncProgressWire progress = const PositionSyncProgressWire();
   PositionSyncPermissions perms = const PositionSyncPermissions();
 
-  // Alignment.
-  AlignmentStatusWire alignment = const AlignmentStatusWire();
-  AlignmentBlock? alignmentBlocked;
-  bool alignmentMutating = false;
-  bool cancelling = false;
-  Timer? _alTimer;
-  int _alReq = 0;
-  bool _alAwaiting = false;
-  int _alAwaitPolls = 0;
-  AlignmentStatus _alBaseStatus = AlignmentStatus.none;
-  String? _alBaseBuiltAt;
-  Future<bool>? _pendingAlBuild;
+  // The fork's edition sync.
+  EditionSyncBookStateWire? editionSync;
+  bool editionSyncActing = false;
+  Timer? _indexTimer;
+  int _indexReq = 0;
 
   // Upstream's read-aloud sync.
   bool readAloudSaving = false;
@@ -267,7 +262,7 @@ class PositionSyncController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _alTimer?.cancel();
+    _indexTimer?.cancel();
     _jobTimer?.cancel();
     _searchTimer?.cancel();
     _jobFeed?.cancel();
@@ -288,12 +283,15 @@ class PositionSyncController extends ChangeNotifier {
 
   bool get _hasAudio => info?.audiobook != null;
 
-  /// Whisper aligns the plain EPUB with the audio only while the book has no
-  /// read-aloud, which upstream's own sync takes over.
-  bool get _usesWhisper => info?.ebook != null && info?.audiobook != null && info?.readAlong == null;
+  /// A plain EPUB and audio and no read-aloud, which upstream's own sync
+  /// would take over: the pair the timing index joins and the generator
+  /// could make a read-aloud for.
+  bool get _lacksReadAlong => info?.ebook != null && info?.audiobook != null && info?.readAlong == null;
 
-  bool get busy =>
-      alignmentMutating || readAloudSaving || jobAction != null || absBusy != null;
+  /// Edition sync reaches this reader and the book is one it can index.
+  bool get _indexApplies => perms.editionSync && _lacksReadAlong;
+
+  bool get busy => editionSyncActing || readAloudSaving || jobAction != null || absBusy != null;
 
   /// Two of the book's own files to sync, or Audiobookshelf for its audio.
   /// Until the first answers are in the button shows its loading look rather
@@ -310,7 +308,7 @@ class PositionSyncController extends ChangeNotifier {
   bool get creating => _job?.running == true;
 
   SyncChainReadAloudSlot get _slot => SyncChainReadAloudSlot(
-        entry: resolveReadAloudEntry(enabled: perms.generate && _usesWhisper, capability: capability, job: _job),
+        entry: resolveReadAloudEntry(enabled: perms.generate && _lacksReadAlong, capability: capability, job: _job),
         job: slotJobFrom(_job),
         pending: jobAction,
         error: _slotError,
@@ -336,6 +334,13 @@ class PositionSyncController extends ChangeNotifier {
           progress: progress,
         );
 
+  /// The Editions card's sync footer: upstream's read-aloud sync for a book
+  /// with a read-aloud, else the timing index.
+  EditionSyncCard? get card => editionSyncCard(snapshot, readAloudSaving: readAloudSaving);
+
+  /// The card's switch, flipping whichever sync [card] shows.
+  Future<bool> setCardSync(bool on) => card?.readAlong == true ? setReadAloudSync(on) : setIndexSync(on);
+
   SyncChainSnapshot get snapshot {
     final i = info;
     final audio = progress.audio;
@@ -346,19 +351,33 @@ class PositionSyncController extends ChangeNotifier {
       readAlong: _edition(i?.readAlong, _filesProgress(i?.readAlong)),
       audiobook: _edition(i?.audiobook, audio == null ? null : displayPercentage(audio, audio >= 100)),
       readAloudSlot: _slot,
-      alignment: SyncChainAlignment(
-        status: alignment.status,
-        stale: alignment.stale,
-        builtAt: alignment.builtAt,
-        samplesDone: alignment.samplesDone,
-        samplesTotal: alignment.samplesTotal,
-        buildBlocked: alignmentBlocked,
-        buildError: alignment.error,
-        running: _alignmentRunning(alignment.status) || alignmentMutating,
-      ),
+      index: index,
       readAloud: i?.readAloudSync ?? const ReadAloudSync(),
       abs: perms.abs ? SyncChainAbs(configured: absConfigured, link: _absMirror, live: _absLiveMirror, checking: absChecking) : null,
-      canAlign: perms.align,
+    );
+  }
+
+  /// The book's edition sync as the chain and the Editions card show it,
+  /// or null where it doesn't reach the book.
+  SyncChainIndex? get index {
+    final e = editionSync;
+    final readAloudOff = info?.readAloudSync.mode == ReadAloudSyncMode.disabled;
+    if (!_indexApplies || e == null || !e.eligible || e.hasReadAlong) return null;
+    final next = e.nextRunAt == null ? null : DateTime.tryParse(e.nextRunAt!);
+    return SyncChainIndex(
+      status: e.status,
+      on: e.syncEnabled && !readAloudOff,
+      stage: e.stage,
+      progress: e.progress,
+      queuePosition: e.queuePosition,
+      error: e.error,
+      whisperFallback: e.whisperFallback,
+      canRunNow: e.canRunNow,
+      canRetry: e.canRetry,
+      startingSoon: e.pinned || e.runActive,
+      when: next == null ? null : describeNextRun(next, DateTime.now()),
+      acting: editionSyncActing || readAloudSaving,
+      offReason: e.syncEnabled ? (readAloudOff ? EditionSyncOffReason.readAloudSyncOff : null) : e.offReason,
     );
   }
 
@@ -398,15 +417,16 @@ class PositionSyncController extends ChangeNotifier {
   }
 
   String get buttonTooltip => PositionSyncCopy.tooltip(
-      creating && chain.header.tone != ChainTone.info ? readAloudStageLabel(_job?.stage) : chain.header.label);
+      creating && chain.header.tone != ChainTone.info ? readAloudStageLabel(_job?.stage) : chain.header.label,
+  );
 
-  /// The building ring's fill: alignment samples, or the read-aloud job's
-  /// own progress; null spins.
+  /// The building ring's fill: the timing index's progress, or the
+  /// read-aloud job's own; null spins.
   double? get buttonProgress {
-    if (_alignmentRunning(alignment.status) || alignmentMutating) {
-      final done = alignment.samplesDone;
-      final total = alignment.samplesTotal;
-      return done != null && total != null && total > 0 ? (done / total).clamp(0.0, 1.0) : null;
+    final i = index;
+    if (i != null && i.running) {
+      final p = i.progress;
+      return p == null ? null : (p / 100).clamp(0.0, 1.0);
     }
     final j = _job;
     if (j == null || j.status != ReadAloudJobStatus.processing) return null;
@@ -438,7 +458,7 @@ class PositionSyncController extends ChangeNotifier {
     if (info == null) loadError = PositionSyncCopy.loadFailed;
     loaded = true;
     _changed();
-    await Future.wait([_loadProgress(), _alFetchIfWhisper(), _absLoadConfigured(), _loadCapability()]);
+    await Future.wait([_loadProgress(), _indexFetchIfApplies(), _absLoadConfigured(), _loadCapability()]);
   }
 
   /// The sheet opened: read everything it shows again.
@@ -460,12 +480,10 @@ class PositionSyncController extends ChangeNotifier {
     if (_disposed) return;
     _changed();
     await Future.wait([
-      _loadProgress(),
-      _alFetchIfWhisper(),
+      _loadProgress(), _indexFetchIfApplies(),
       _absLoadConfigured(),
       _absLoad(),
-      _loadCapability(),
-    ]);
+      _loadCapability()]);
   }
 
   Future<void> _loadProgress() async {
@@ -511,144 +529,108 @@ class PositionSyncController extends ChangeNotifier {
     }
   }
 
-  // ─── Alignment ────────────────────────────────────────────
+  // ─── Edition sync ─────────────────────────────────────────
 
-  Future<void> _alFetchIfWhisper() => _usesWhisper ? _alFetch() : Future.value();
+  Future<void> _indexFetchIfApplies() => _indexApplies ? _indexFetch() : Future.value();
 
-  void _alSchedule() {
-    _alTimer?.cancel();
-    _alTimer = null;
-    if (_parked || !_alignmentRunning(alignment.status)) return;
-    _alTimer = Timer(_alignmentPoll, () {
-      _alTimer = null;
-      unawaited(_alFetch());
+  void _indexSchedule() {
+    _indexTimer?.cancel();
+    _indexTimer = null;
+    final e = editionSync;
+    if (_parked || e == null || !e.moving) return;
+    final queuedIdle = e.status == EditionSyncIndexStatus.queued && !e.pinned && !e.runActive;
+    _indexTimer = Timer(queuedIdle ? _indexQueuedPoll : _indexPoll, () {
+      _indexTimer = null;
+      unawaited(_indexFetch());
     });
   }
 
-  bool _alKeepAwaiting() {
-    if (!_alAwaiting) return false;
-    _alAwaitPolls++;
-    if (_alAwaitPolls < _maxAwaitBuildRowPolls) return true;
-    _alAwaiting = false;
-    _alAwaitPolls = 0;
-    alignment = const AlignmentStatusWire();
-    return false;
+  /// Takes a state the server answered with; an older read still in flight
+  /// is dropped when it lands.
+  void _indexApply(EditionSyncBookStateWire next) {
+    _indexReq++;
+    editionSync = next;
+    _indexSchedule();
+    _changed();
   }
 
-  // While awaiting a build: none means the row isn't created yet; a terminal
-  // read is stale only if it matches the snapshot the build began from.
-  bool _alStaleRead(AlignmentStatus next, String? builtAt) {
-    if (!_alAwaiting || next == AlignmentStatus.building) return false;
-    if (next == AlignmentStatus.none) return true;
-    return next == _alBaseStatus && builtAt == _alBaseBuiltAt;
-  }
-
-  Future<void> _alFetch() async {
-    final req = ++_alReq;
+  Future<void> _indexFetch() async {
+    final req = ++_indexReq;
     try {
-      final r = await api.alignmentStatus(bookId);
-      if (_disposed || req != _alReq) return;
-      if (_alStaleRead(r.status, r.builtAt) && _alKeepAwaiting()) return;
-      _alAwaiting = false;
-      _alAwaitPolls = 0;
-      alignment = r;
+      final r = await api.editionSyncState(bookId);
+      if (_disposed || req != _indexReq) return;
+      editionSync = r;
     } catch (e) {
-      if (_disposed || req != _alReq) return;
-      if (!_alKeepAwaiting()) alignment = const AlignmentStatusWire();
+      // A failed poll keeps the last known state; the next tick retries.
+      debugPrint('[PositionSync] edition sync state for $bookId: $e');
     } finally {
-      // Only the latest read drives polling, and never after disposal.
-      if (!_disposed && req == _alReq) {
-        _alSchedule();
+      if (!_disposed && req == _indexReq) {
+        _indexSchedule();
         _changed();
       }
     }
   }
 
-  /// False when the request itself failed; a refusal sets
-  /// [alignmentBlocked] instead.
-  Future<bool> _alBuild({bool force = false}) {
-    final f = _alRequestBuild(force);
-    _pendingAlBuild = f;
-    f.whenComplete(() {
-      if (identical(_pendingAlBuild, f)) _pendingAlBuild = null;
-    });
-    return f;
-  }
-
-  Future<bool> _alRequestBuild(bool force) async {
-    alignmentMutating = true;
-    alignmentBlocked = null;
-    final baseStatus = alignment.status;
-    final baseBuiltAt = alignment.builtAt;
+  /// False when the server refused or couldn't be reached; the open sheet
+  /// is told, and a caller without one says so itself.
+  Future<bool> _indexAct(Future<EditionSyncBookStateWire> Function() call) async {
+      if (editionSyncActing) return true;
+    editionSyncActing = true;
     _changed();
     try {
-      final r = await api.buildAlignment(bookId, force: force);
-      if (_disposed) return true;
-      if (r.blocked != null) {
-        alignmentBlocked = r.blocked;
-        return true;
-      }
-      // The row is created asynchronously, so the next read can still say none.
-      alignment = AlignmentStatusWire(
-        status: AlignmentStatus.building,
-        samplesDone: alignment.samplesDone,
-        samplesTotal: alignment.samplesTotal,
-        builtAt: alignment.builtAt,
-      );
-      _alAwaiting = true;
-      _alAwaitPolls = 0;
-      _alBaseStatus = baseStatus;
-      _alBaseBuiltAt = baseBuiltAt;
-      await _alFetch();
+      final r = await call();
+      if (!_disposed) _indexApply(r);
       return true;
     } catch (e) {
-      debugPrint('[PositionSync] alignment build for $bookId: $e');
-      if (!_disposed) await _alFetch();
+      debugPrint('[PositionSync] edition sync for $bookId: $e');
+      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastEditionSyncFailed);
       return false;
     } finally {
-      alignmentMutating = false;
+      editionSyncActing = false;
       _changed();
     }
   }
 
-  Future<void> buildAlignmentAction({bool force = false}) async {
-    if (!await _alBuild(force: force)) _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastAlignBuildFailed);
+  /// The book's edition sync switch. Turning it on also turns upstream's
+  /// read-aloud sync back on when it was off, which the timing index rides
+  /// on, as BookOrbit's planEditionSyncToggle does, and only once the switch
+  /// has gone through.
+  /// A flip while one is already going through is dropped, and its
+  /// read-aloud step with it.
+  Future<bool> setIndexSync(bool on) async {
+    if (editionSyncActing) return true;
+    final ok = await _indexAct(() => api.setEditionSync(bookId, on));
+    if (ok && on && editionSync?.syncEnabled == true && info?.readAloudSync.mode == ReadAloudSyncMode.disabled) {
+      return setReadAloudSync(true);
+    }
+    return ok;
   }
 
-  /// Only a cancel in flight locks the cancel button: a build in flight is
-  /// exactly what it stops.
-  Future<void> cancelAlignmentAction() async {
-    cancelling = true;
-    _changed();
-    try {
-      // A cancel sent before the build lands finds nothing to stop.
-      final pending = _pendingAlBuild;
-      if (pending != null) await pending;
-      await api.cancelAlignment(bookId);
-      // A cancelled build never gets its row.
-      _alAwaiting = false;
-      _alAwaitPolls = 0;
-      await _alFetch();
-    } catch (e) {
-      debugPrint('[PositionSync] alignment cancel for $bookId: $e');
-      _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastSyncCancelKeptRunning);
-    } finally {
-      cancelling = false;
-      _changed();
-    }
-  }
+  Future<bool> runIndexNow() => _indexAct(() => api.runEditionSyncNow(bookId));
+
+  Future<bool> retryIndex() => _indexAct(() => api.retryEditionSync(bookId));
+
+  /// One of edition sync's actions, from the sheet or the Editions card.
+  Future<bool> runIndexAction(ChainActionId id) => switch (id) {
+    ChainActionId.enableIndexSync => setIndexSync(true),
+    ChainActionId.disableIndexSync => setIndexSync(false),
+    ChainActionId.retryIndex => retryIndex(),
+    ChainActionId.runIndexNow => runIndexNow(),
+    _ => Future.value(false),
+  };
 
   // ─── Read-aloud sync ──────────────────────────────────────
 
-  Future<void> setReadAloudSync(bool on) async {
+  /// False when the server refused or couldn't be reached.
+  Future<bool> setReadAloudSync(bool on) async {
     final mode = on ? ReadAloudSyncMode.auto : ReadAloudSyncMode.disabled;
     final current = info;
-    if (readAloudSaving || current == null || current.readAloudSync.mode == mode) return;
+    if (readAloudSaving || current == null || current.readAloudSync.mode == mode) return true;
     readAloudSaving = true;
     _changed();
     try {
       final sync = await api.setReadAloudSyncMode(bookId, mode);
-      if (_disposed) return;
+      if (_disposed) return true;
       info = PositionSyncBookInfo(
         coverVersion: current.coverVersion,
         language: current.language,
@@ -657,9 +639,11 @@ class PositionSyncController extends ChangeNotifier {
         audiobook: current.audiobook,
         readAloudSync: sync,
       );
+      return true;
     } catch (e) {
       debugPrint('[PositionSync] read-aloud sync for $bookId: $e');
       _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastReadAloudSyncFailed);
+      return false;
     } finally {
       readAloudSaving = false;
       _changed();
@@ -668,7 +652,7 @@ class PositionSyncController extends ChangeNotifier {
 
   // ─── Read-aloud generator ─────────────────────────────────
 
-  bool get _generatorApplies => perms.generate && _usesWhisper;
+  bool get _generatorApplies => perms.generate && _lacksReadAlong;
 
   Future<void> _loadCapability() async {
     // A job already running is followed even when the book stopped
@@ -793,7 +777,8 @@ class PositionSyncController extends ChangeNotifier {
     }
   }
 
-  Future<void> _mutateJob(ReadAloudPending action, Future<ReadAloudJobWire?> Function(String id) call, String fallback) async {
+  Future<void> _mutateJob(ReadAloudPending action, Future<ReadAloudJobWire?> Function(String id) call, String fallback,
+  ) async {
     final current = _job;
     if (current == null || jobAction != null) return;
     jobAction = action;
@@ -970,7 +955,8 @@ class PositionSyncController extends ChangeNotifier {
     try {
       await api.absSetExcluded(id, excluded);
       await _absLoad();
-      _notice(PositionSyncNoticeKind.success, excluded ? PositionSyncCopy.toastAbsPaused : PositionSyncCopy.toastAbsResumed);
+      _notice(PositionSyncNoticeKind.success, excluded ? PositionSyncCopy.toastAbsPaused : PositionSyncCopy.toastAbsResumed,
+      );
     } catch (e) {
       _notice(PositionSyncNoticeKind.error, PositionSyncCopy.toastAbsFailed);
     } finally {

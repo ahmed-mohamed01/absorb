@@ -3,40 +3,53 @@ import 'package:absorb/services/fork/position_sync_chain.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('AlignmentStatusWire', () {
-    test('a bare none payload', () {
-      final w = AlignmentStatusWire.fromJson({'status': 'none'});
-      expect(w.status, AlignmentStatus.none);
-      expect(w.builtAt, isNull);
-      expect(w.stale, isFalse);
-      expect(AlignmentStatusWire.fromJson({'status': 'weird'}).status, AlignmentStatus.none);
-    });
-
-    test('a full ready and stale payload', () {
-      final w = AlignmentStatusWire.fromJson({
-        'status': 'ready',
-        'samplesDone': 40,
-        'samplesTotal': 40,
-        'anchorCount': 312,
-        'builtAt': '2026-10-01T10:00:00.000Z',
+  group('EditionSyncBookStateWire', () {
+    test('reads the switch and the index', () {
+      final w = EditionSyncBookStateWire.fromJson({
+        'bookId': 50,
+        'eligible': true,
+        'hasReadAlong': false,
+        'syncEnabled': true,
+        'pinned': false,
+        'runActive': true,
+        'index': {'status': 'running',
+          'stage': 'aligning',
+          'progress': 42.5,
+          'queuePosition': null,
+          'nextRunAt': '2026-11-03T02:00:00.000Z',
         'error': null,
-        'stale': true,
+          'whisperFallback': false,
+        },
+        'canRunNow': false,
+        'canRetry': true,
       });
-      expect(w.status, AlignmentStatus.ready);
-      expect(w.samplesDone, 40);
-      expect(w.samplesTotal, 40);
-      expect(w.builtAt, '2026-10-01T10:00:00.000Z');
-      expect(w.stale, isTrue);
+      expect(w.eligible, isTrue);
+      expect(w.syncEnabled, isTrue);
+      expect(w.runActive, isTrue);
+      expect(w.status, EditionSyncIndexStatus.running);
+      expect(w.stage, 'aligning');
+      expect(w.progress, 42.5);
+      expect(w.nextRunAt, '2026-11-03T02:00:00.000Z');
+      expect(w.canRetry, isTrue);
+      expect(w.moving, isTrue);
     });
 
-    test('a build answer tells a block from a start', () {
-      final busy = AlignmentBuildWire.fromJson({'status': 'busy'});
-      expect(busy.blocked, AlignmentBlock.busy);
-      expect(busy.started, isNull);
-      final building = AlignmentBuildWire.fromJson({'status': 'building'});
-      expect(building.blocked, isNull);
-      expect(building.started, AlignmentStatus.building);
-      expect(AlignmentBuildWire.fromJson({'status': 'unavailable'}).blocked, AlignmentBlock.unavailable);
+    test('an unknown status or a bare payload reads as none, and off never polls', () {
+      expect(EditionSyncBookStateWire.fromJson({'index': {'status': 'weird'}}).status, EditionSyncIndexStatus.none);
+      final bare = EditionSyncBookStateWire.fromJson(const {});
+      expect(bare.status, EditionSyncIndexStatus.none);
+      expect(bare.eligible, isFalse);
+      expect(
+          EditionSyncBookStateWire.fromJson({'syncEnabled': false, 'index': {'status': 'queued'}}).moving, isFalse);
+    });
+
+    test('effectiveReason says why sync is off, and is dropped while on', () {
+      expect(EditionSyncBookStateWire.fromJson({'syncEnabled': false, 'effectiveReason': 'not_selected'}).offReason,
+          EditionSyncOffReason.notSelected);
+      expect(EditionSyncBookStateWire.fromJson({'syncEnabled': false, 'effectiveReason': 'user_disabled'}).offReason,
+          EditionSyncOffReason.userDisabled);
+      expect(EditionSyncBookStateWire.fromJson({'syncEnabled': true, 'effectiveReason': 'excluded'}).offReason, isNull);
+      expect(EditionSyncBookStateWire.fromJson({'syncEnabled': false, 'effectiveReason': 'new_one'}).offReason, isNull);
     });
   });
 

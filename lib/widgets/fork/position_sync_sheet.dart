@@ -15,6 +15,9 @@ import '../adaptive_modal.dart';
 import '../overlay_toast.dart';
 import 'tinted_sheet.dart';
 
+// For the book page's parts, which reach the sync state through this file.
+export '../../services/fork/position_sync_controller.dart' show PositionSyncController;
+
 // Fork-owned: the BookOrbit Position sync button in the detail page's top
 // bar and its sheet: the chain of the book's own files (ebook, read-aloud,
 // audiobook and its Audiobookshelf match), upstream's read-aloud generator
@@ -50,6 +53,9 @@ Widget _tag(String text, Color color, {double fontSize = 11, EdgeInsets? padding
       decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(8)),
       child: Text(text, style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w600, color: color)),
     );
+
+/// A chain tone's colour, for the Editions card's sync status.
+Color syncToneColor(BuildContext context, ChainTone tone) => _tone(context, tone);
 
 IconData syncEditionIcon(SyncEdition e) => switch (e) {
       SyncEdition.audiobook => Icons.headphones_rounded,
@@ -139,7 +145,7 @@ class _ForkSyncButtonState extends State<ForkSyncButton> {
   /// is: the sheet's swap icon, outlined until the files sync, filled in the
   /// cover's accent when they're in sync, outlined in the accent when one
   /// wants checking, filled red when something needs attention, and in the
-  /// blue build ring while an alignment or a read-aloud is made.
+  /// blue build ring while a timing index or a read-aloud is made.
   Widget _barButton(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final state = _c.buttonState;
@@ -634,10 +640,8 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     final hint = _absLiveHint(r);
     final details = <Widget>[
       if (r.note != null) _detailText(r.note!, cs.onSurface.withValues(alpha: 0.8)),
-      if (r.detail != null) _detailText(r.detail!, muted, mono: true),
       if (hint != null) _detailText(hint, cs.onSurface.withValues(alpha: 0.8)),
       if (r.key == ConnectorKey.audiobookAbs && _c.absActionError != null) _detailText(_c.absActionError!, cs.error),
-      if (r.ticks != null) _ticks(context, r.ticks!),
       if (r.actions.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 8),
@@ -677,13 +681,6 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
               ),
               onPressed: () => setState(() => explained ? _explained.remove(r.key) : _explained.add(r.key)),
             ),
-          if (r.cancel != null)
-            IconButton(
-              visualDensity: VisualDensity.compact,
-              tooltip: r.cancel!.label,
-              icon: Icon(Icons.close_rounded, size: 20, color: cs.error),
-              onPressed: _c.cancelling || r.cancel!.disabled ? null : () => _runAction(r.cancel!),
-            ),
         ]),
         if (explained && r.explainer != null)
           Padding(
@@ -715,10 +712,10 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     ]);
   }
 
-  Widget _detailText(String text, Color color, {bool mono = false}) => Padding(
+  Widget _detailText(String text, Color color) => Padding(
         padding: const EdgeInsets.only(top: 4),
         child: Text(text,
-            style: TextStyle(fontSize: 12, height: 1.4, color: color, fontFamily: mono ? 'monospace' : null)),
+            style: TextStyle(fontSize: 12, height: 1.4, color: color)),
       );
 
   Widget _bar(BuildContext context, double? value) {
@@ -734,25 +731,10 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
     );
   }
 
-  Widget _ticks(BuildContext context, ({int? done, int? total}) t) {
-    final total = t.total;
-    final done = t.done ?? 0;
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Row(children: [
-        Expanded(child: _bar(context, total == null || total <= 0 ? null : (done / total).clamp(0.0, 1.0))),
-        if (total != null) ...[
-          const SizedBox(width: 8),
-          Text('$done / $total', style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        ],
-      ]),
-    );
-  }
-
   Widget _pillButton(BuildContext context, ChainAction a, ChainTone tone, {required bool filled, bool pending = false}) {
     final color = tone == ChainTone.muted ? _accent : _tone(context, tone);
-    final isCancel = a.id == ChainActionId.cancelAlignment || a.id == ChainActionId.cancelReadAloud;
-    final enabled = !a.disabled && (isCancel ? !_c.cancelling : !_c.busy);
+    // A cancel stops what is busy, so only its own request locks it.
+    final enabled = !a.disabled && (a.id == ChainActionId.cancelReadAloud || !_c.busy);
     final onPressed = enabled ? () => _runAction(a) : null;
     const shape = StadiumBorder();
     const size = Size(0, 36);
@@ -876,13 +858,11 @@ class _PositionSyncSheetState extends State<_PositionSyncSheet> {
 
   void _runAction(ChainAction a) {
     switch (a.id) {
-      case ChainActionId.cancelAlignment:
-        unawaited(_c.cancelAlignmentAction());
-      case ChainActionId.retryAlignment:
-      case ChainActionId.alignNow:
-        unawaited(_c.buildAlignmentAction());
-      case ChainActionId.rebuildAlignment:
-        unawaited(_c.buildAlignmentAction(force: true));
+      case ChainActionId.enableIndexSync ||
+          ChainActionId.disableIndexSync ||
+          ChainActionId.runIndexNow ||
+          ChainActionId.retryIndex:
+        unawaited(_c.runIndexAction(a.id));
       case ChainActionId.enableReadAloudSync:
         unawaited(_c.setReadAloudSync(true));
       case ChainActionId.disableReadAloudSync:
