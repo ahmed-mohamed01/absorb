@@ -41,6 +41,8 @@ import 'overlay_toast.dart';
 import 'sleep_timer_sheet.dart';
 import 'transcription_download_prompt.dart';
 
+part 'fork/player_icon_bar.dart';
+
 /// E-ink screens dither faint greys and cover-colored accents into noise, so
 /// the card controls bump to near-black when e-ink mode is on. Disabled stays
 /// visibly lighter than enabled, just dark enough to survive the panel.
@@ -1326,7 +1328,9 @@ class MoreMenuSheet extends StatefulWidget {
   final void Function(List<String>, int) onReorder;
   // The transcript slot reads Read along on a card whose book has an epub.
   final bool readAlongLabel;
-  const MoreMenuSheet({super.key, required this.overflowIds, required this.allIds, this.visibleCount = 4, required this.accent, required this.buildItem, required this.onReorder, this.readAlongLabel = false});
+  // False under the player's icon bar, whose buttons are fixed.
+  final bool editable;
+  const MoreMenuSheet({super.key, required this.overflowIds, required this.allIds, this.visibleCount = 4, required this.accent, required this.buildItem, required this.onReorder, this.readAlongLabel = false, this.editable = true});
   @override State<MoreMenuSheet> createState() => _MoreMenuSheetState();
 }
 
@@ -1383,7 +1387,7 @@ class _MoreMenuSheetState extends State<MoreMenuSheet> {
                 alignment: Alignment.center,
                 children: [
                   Container(width: 40, height: 4, decoration: BoxDecoration(color: cs.onSurface.withValues(alpha: 0.24), borderRadius: BorderRadius.circular(2))),
-                  Align(
+                  if (widget.editable) Align(
                     alignment: Alignment.centerRight,
                     child: GestureDetector(
                       onTap: () => setState(() => _editing = true),
@@ -1654,9 +1658,13 @@ class CardActionDelegate {
   // An epub beside the audio turns the live transcript button into Read
   // along: the reader lights the book's own words instead of a card overlay.
   final bool isEbookEpub;
+  // Any ebook beside the audio: the player's top pill shows its book button.
+  final bool hasEbook;
   final VoidCallback? onEbookTap;
   final VoidCallback? onFindInEbookTap;
   final VoidCallback? onReadAlongTap;
+  // The Now Playing page's queue sheet, offered first in More.
+  final VoidCallback? onManageQueue;
 
   CardActionDelegate({
     required this.context,
@@ -1686,9 +1694,11 @@ class CardActionDelegate {
     required this.onReorder,
     this.isEbookPdf = false,
     this.isEbookEpub = false,
+    this.hasEbook = false,
     this.onEbookTap,
     this.onFindInEbookTap,
     this.onReadAlongTap,
+    this.onManageQueue,
   });
 
   bool get _readAlongInstead =>
@@ -2080,6 +2090,8 @@ class CardActionDelegate {
   Widget buildMoreMenuItem(String id, Color accent, TextTheme tt, BuildContext ctx) {
     final l = AppLocalizations.of(context)!;
     switch (id) {
+      case '_queue':
+        return _forkManageQueueItem(accent, ctx);
       case 'chapters':
         return MoreMenuItem(
           icon: Icons.list_rounded, label: l.chapters, accent: accent,
@@ -2288,9 +2300,9 @@ class CardActionDelegate {
     }
   }
 
-  void showMoreMenu(Color accent, TextTheme tt) {
+  void showMoreMenu(Color accent, TextTheme tt, {bool iconBar = false}) {
     final count = visibleButtonCount;
-    final overflowIds = _shownOrder.skip(count).where((id) => id != '_more').toList();
+    final overflowIds = iconBar ? _forkIconBarOverflow() : _shownOrder.skip(count).where((id) => id != '_more').toList();
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -2303,9 +2315,11 @@ class CardActionDelegate {
         buildItem: (id) => buildMoreMenuItem(id, accent, tt, ctx),
         onReorder: (order, newCount) => onReorder(order, newCount),
         readAlongLabel: _readAlongInstead,
+        editable: !iconBar,
       ),
     );
   }
+
 
   void showNotes(BuildContext ctx, Color accent) {
     NotesSheet.show(ctx, itemId: itemId, itemTitle: title, accent: accent);

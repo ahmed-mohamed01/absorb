@@ -106,23 +106,6 @@ class _AbsorbingScreenState extends State<AbsorbingScreen> {
     if (mounted && v != _mergeLibraries) setState(() => _mergeLibraries = v);
   }
 
-  String _activePlaylistChipLabel(LibraryProvider lib, AppLocalizations l) {
-    final id = _queuePlaylistId;
-    if (id == null) return l.queueModePlaylist;
-    final match = lib.playlists.cast<Map<String, dynamic>>().where(
-      (p) => p['id'] == id,
-    ).firstOrNull;
-    final n = match?['name'] as String?;
-    if (n == null || n.isEmpty) return l.queueModePlaylist;
-    return n.length > 24 ? '${n.substring(0, 23)}…' : n;
-  }
-
-  String _activeCollectionChipLabel(AppLocalizations l) {
-    final n = _queueCollectionName;
-    if (n == null || n.isEmpty) return l.queueModeCollection;
-    return n.length > 24 ? '${n.substring(0, 23)}…' : n;
-  }
-
   Future<void> _loadQueueMode() async {
     final lib = context.read<LibraryProvider>();
     String mode;
@@ -396,14 +379,6 @@ class _AbsorbingScreenState extends State<AbsorbingScreen> {
     if (mounted) setState(() => _isSyncing = false);
   }
 
-  /// Pull-to-refresh: sync progress to/from server without stopping playback.
-  Future<void> _pullRefresh() async {
-    final lib = context.read<LibraryProvider>();
-    if (lib.isOffline) return;
-    await lib.refresh();
-  }
-
-
   /// Derive the absorbing key for an item map: compound "itemId-episodeId" for
   /// podcast episodes, plain "itemId" for books.
   String _absorbingKey(Map<String, dynamic> item) {
@@ -652,10 +627,6 @@ class _AbsorbingScreenState extends State<AbsorbingScreen> {
         !_cast.isCasting &&
         lib.personalizedSections.isEmpty;
 
-    final muted = cs.onSurfaceVariant;
-    final subtleBg = cs.onSurface.withValues(alpha: 0.06);
-    final subtleBorder = cs.onSurface.withValues(alpha: 0.08);
-
     return Scaffold(
       backgroundColor: scaffoldBg,
       body: Container(
@@ -690,82 +661,19 @@ class _AbsorbingScreenState extends State<AbsorbingScreen> {
           );
 
           final headerActions = <Widget>[
-            if (_player.hasBook)
-              GestureDetector(
-                onTap: _isSyncing ? null : () => _stopAndRefresh(lib),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: subtleBg,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: subtleBorder),
-                  ),
-                  child: SizedBox(
-                    height: 20,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_isSyncing)
-                          SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 1.5, color: muted))
-                        else
-                          Icon(Icons.stop_rounded, size: 18, color: muted),
-                        const SizedBox(width: 4),
-                        Text(l.absorbingStop, style: TextStyle(color: muted, fontSize: 13, fontWeight: FontWeight.w500)),
-                      ],
-                    ),
-                  ),
-                ),
-              )
-            else if (!effectiveOffline)
-              GestureDetector(
-                onTap: _isSyncing ? null : () async {
-                  setState(() => _isSyncing = true);
-                  await _pullRefresh();
-                  if (mounted) setState(() => _isSyncing = false);
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: subtleBg,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: subtleBorder),
-                  ),
-                  child: _isSyncing
-                      ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 1.5, color: muted))
-                      : Icon(Icons.refresh_rounded, size: 18, color: muted),
-                ),
-              ),
+            // Read / download / more for the card in view.
             if (books.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => _showReorderSheet(context, lib, books),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: subtleBg,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: subtleBorder),
-                  ),
-                  child: SizedBox(
-                    height: 20,
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.reorder_rounded, size: 18, color: muted),
-                      if (_queueMode != 'off') ...[
-                        const SizedBox(width: 4),
-                        Text(
-                          _queueMode == 'playlist'
-                              ? _activePlaylistChipLabel(lib, l)
-                              : _queueMode == 'collection'
-                                  ? _activeCollectionChipLabel(l)
-                                  : _queueMode == 'auto_next'
-                                      ? (_mergeLibraries ? l.queueModeAuto : lib.isPodcastLibrary ? l.queueModeShowLabel : l.queueModeSeriesLabel)
-                                      : l.queueModeManual,
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: cs.primary),
-                        ),
-                      ],
-                    ]),
-                  ),
-                ),
+              AnimatedBuilder(
+                animation: Listenable.merge([_pageController, AbsorbingCardState.headerTick]),
+                builder: (context, _) {
+                  final page = _pageController.hasClients && _pageController.positions.length == 1
+                      ? (_pageController.page ?? _pageController.initialPage.toDouble()).round()
+                      : _pageController.initialPage;
+                  final book = books[page.clamp(0, books.length - 1)];
+                  final card = _cardKeys[_absorbingKey(book)]?.currentState;
+                  return card?.buildHeaderPill(context,
+                      onManageQueue: () => _showReorderSheet(context, lib, books)) ?? const SizedBox.shrink();
+                },
               ),
             ],
           ];

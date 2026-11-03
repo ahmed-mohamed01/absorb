@@ -196,6 +196,9 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
   @override
   void initState() {
     super.initState();
+    // The page header reads this card's state through its key, which only
+    // resolves after the first frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) => headerTick.value++);
     // Baseline the server-change tick so only a CHANGE after mount re-fetches
     // (the initial fill is handled by _fetchChaptersIfNeeded below).
     _lastSeenUpdatedAt = context.read<LibraryProvider>().itemUpdatedAt(_itemId);
@@ -302,7 +305,10 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
         // never set media.ebookFile).
         if (inlineEbook == null) {
           final ef = resolveEbookFile(fullItem);
-          if (ef != null) setState(() => _fetchedEbookFile = ef);
+          if (ef != null) {
+            setState(() => _fetchedEbookFile = ef);
+            headerTick.value++;
+          }
         }
         // Books: chapters at media level
         var chapters = media['chapters'] as List<dynamic>? ?? [];
@@ -1091,43 +1097,7 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          ..._buildButtonGrid(accent, tt),
-                          if (!_moreInline) ...[
-                          const SizedBox(height: 6),
-                          Center(
-                            child: ListenableBuilder(
-                              listenable: ChromecastService(),
-                              builder: (context, _) {
-                                final castActive = ChromecastService().isCasting && !_buttonOrder.take(_visibleButtonCount).contains('cast');
-                                return Pressable(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: () => _showMoreMenu(context, accent, tt),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: castActive ? accent.withValues(alpha: 0.15) : cs.onSurface.withValues(alpha: 0.08),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: castActive
-                                          ? [
-                                              Icon(Icons.cast_connected_rounded, size: 18, color: accent),
-                                              const SizedBox(width: 4),
-                                              Text(l.casting, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: accent)),
-                                            ]
-                                          : [
-                                              Icon(Icons.more_horiz_rounded, size: 18, color: cs.onSurface.withValues(alpha: 0.54)),
-                                              const SizedBox(width: 4),
-                                              Text(l.more, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.54))),
-                                            ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          ],
+                          _makeActions().buildIconRow(accent, tt),
                           SizedBox(height: compact ? 4 : 8),
                         ],
                       ),
@@ -1346,7 +1316,7 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
 
   // ── Dynamic button builders (delegated) ─────────────────────
 
-  CardActionDelegate _makeActions() => CardActionDelegate(
+  CardActionDelegate _makeActions({VoidCallback? onManageQueue}) => CardActionDelegate(
     context: context,
     player: widget.player,
     item: widget.item,
@@ -1377,15 +1347,23 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
     },
     isEbookPdf: _ebookExt == 'pdf',
     isEbookEpub: _ebookExt == 'epub',
+    hasEbook: _ebookExt != null,
     onEbookTap: _openEbookReader,
     onFindInEbookTap: _findInEbook,
     onReadAlongTap: _openReadAlong,
+    onManageQueue: onManageQueue,
   );
 
-  int get _visibleButtonCount => _buttonVisibleCount;
+  /// Bumped when what [buildHeaderPill] shows may have changed, so the Now
+  /// Playing header (outside this card) rebuilds.
+  static final headerTick = ValueNotifier<int>(0);
 
-  List<Widget> _buildButtonGrid(Color accent, TextTheme tt) => _makeActions().buildButtonGrid(accent, tt);
-
-  void _showMoreMenu(BuildContext context, Color accent, TextTheme tt) => _makeActions().showMoreMenu(accent, tt);
-
+  /// Read / download / more for the Now Playing page header. [onManageQueue]
+  /// puts the page's queue sheet at the top of More.
+  Widget buildHeaderPill(BuildContext headerContext, {VoidCallback? onManageQueue}) {
+    final tt = Theme.of(headerContext).textTheme;
+    final accent = (PlayerSettings.einkMode ? null : _coverScheme)?.primary ??
+        Theme.of(headerContext).colorScheme.primary;
+    return _makeActions(onManageQueue: onManageQueue).buildTopPill(accent, tt, dense: true);
+  }
 }

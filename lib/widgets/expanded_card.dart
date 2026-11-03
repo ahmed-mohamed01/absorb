@@ -738,6 +738,9 @@ class _ExpandedCardState extends State<ExpandedCard> {
                         ),
                       );
 
+                    final header = ForkPlayerHeader(compact: compact, onClose: _dismissExpanded,
+                        pill: _makeActions().buildTopPill(accent, tt));
+
                     final bookProgressBar = Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 20),
                         child: CardDualProgressBar(player: widget.player, accent: accent, isActive: _isActive, staticProgress: progress, staticDuration: _effectiveDuration, chapters: _chapters, showBookBar: showBookBar, showChapterBar: false, itemId: _itemId, showCenterPercent: true),
@@ -767,7 +770,10 @@ class _ExpandedCardState extends State<ExpandedCard> {
                                 final isCastingThis = castService.isCasting && castService.castingItemId == _itemId;
                                 final coverPlaying = isCastingThis ? castService.isPlaying : (_isActive && widget.player.isPlaying);
                                 final coverLoading = _isStarting || (_isActive && widget.player.isLoadingOrBuffering);
-                                return Center(child: Column(
+                                // Spare height goes mostly below the cover so it
+                                // stays near the book bar instead of floating
+                                // midway between it and the controls.
+                                return Align(alignment: const Alignment(0, -0.6), child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Padding(
@@ -966,44 +972,8 @@ class _ExpandedCardState extends State<ExpandedCard> {
                                       libraryId: _resolveLibraryId(),
                                     ),
                                     SizedBox(height: compact ? 8 : 24),
-                                    ..._buildButtonGrid(accent, tt),
-                                    SizedBox(height: compact ? 4 : 14),
-                                    if (!_moreInline) ...[
-                                    Center(
-                                      child: ListenableBuilder(
-                                        listenable: ChromecastService(),
-                                        builder: (context, _) {
-                                          final castActive = ChromecastService().isCasting && !_buttonOrder.take(_visibleButtonCount).contains('cast');
-                                          return Pressable(
-                                            behavior: HitTestBehavior.opaque,
-                                            onTap: () => _showMoreMenu(context, accent, tt),
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-                                              decoration: BoxDecoration(
-                                                color: castActive ? accent.withValues(alpha: 0.15) : cs.onSurface.withValues(alpha: 0.08),
-                                                borderRadius: BorderRadius.circular(22),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: castActive
-                                                    ? [
-                                                        Icon(Icons.cast_connected_rounded, size: 20, color: accent),
-                                                        const SizedBox(width: 6),
-                                                        Text(l.casting, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: accent)),
-                                                      ]
-                                                    : [
-                                                        Icon(Icons.more_horiz_rounded, size: 20, color: cs.onSurface.withValues(alpha: 0.54)),
-                                                        const SizedBox(width: 6),
-                                                        Text(l.more, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: cs.onSurface.withValues(alpha: 0.54))),
-                                                      ],
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                    ],
-                                    SizedBox(height: compact ? 4 : 12),
+                                    _makeActions().buildIconRow(accent, tt),
+                                    SizedBox(height: compact ? 8 : 16),
                                   ],
                                 ),
                         ),
@@ -1017,6 +987,7 @@ class _ExpandedCardState extends State<ExpandedCard> {
                           Expanded(child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
+                              header,
                               // The book bar carries the percent centered in
                               // its time row; the standalone line is only for
                               // layouts with no book bar at all.
@@ -1033,6 +1004,8 @@ class _ExpandedCardState extends State<ExpandedCard> {
 
                     return Column(
                       children: [
+                        header,
+                        SizedBox(height: compact ? 8 : 16),
                         // The book bar carries the percent centered in its
                         // time row; the standalone line is only for layouts
                         // with no book bar at all.
@@ -1234,6 +1207,7 @@ class _ExpandedCardState extends State<ExpandedCard> {
     },
     isEbookPdf: _ebookExt == 'pdf',
     isEbookEpub: _ebookExt == 'epub',
+    hasEbook: _ebookExt != null,
     onEbookTap: _openReader,
     onFindInEbookTap: _findInEbook,
     onReadAlongTap: _openReadAlong,
@@ -1295,11 +1269,5 @@ class _ExpandedCardState extends State<ExpandedCard> {
     if (!mounted) return;
     launchFindInEbook(context, itemId: _itemId, title: _title, ebookFile: ef);
   }
-
-  int get _visibleButtonCount => _buttonVisibleCount;
-
-  List<Widget> _buildButtonGrid(Color accent, TextTheme tt) => _makeActions().buildButtonGrid(accent, tt);
-
-  void _showMoreMenu(BuildContext context, Color accent, TextTheme tt) => _makeActions().showMoreMenu(accent, tt);
 }
 
