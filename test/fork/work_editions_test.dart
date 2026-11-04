@@ -99,6 +99,8 @@ void main() {
     });
 
     test('leaves out what the book does not have', () {
+      expect(missingEditionRequestPayload({'title': 'X', 'authors': [],
+        'series': {'id': '2', 'name': 'Bob', 'sequence': '2'}}, 'audiobook', 7)['seriesName'], 'Bob');
       expect(missingEditionRequestPayload({'title': 'X', 'authors': []}, 'audiobook', 7),
           {'title': 'X', 'mediaKind': 'audiobook', 'targetBookId': 7,
       });

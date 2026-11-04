@@ -6,6 +6,7 @@ import '../services/audio_player_service.dart';
 import '../services/chapter_lookup.dart';
 import '../services/chromecast_service.dart';
 import 'absorb_slider.dart';
+import 'fork/wavy_scrubber.dart';
 
 // ─── DUAL PROGRESS BAR (card version) ───────────────────────
 
@@ -395,7 +396,7 @@ class _CardDualProgressBarState extends State<CardDualProgressBar> with WidgetsB
             // Chapter bar
             if (widget.showChapterBar) ...[
             // ── Chapter pill-scrubber ──
-            SizedBox(height: widget.compact ? 22 : 30, child: LayoutBuilder(builder: (_, cons) {
+            SizedBox(height: ForkWavyChapterBar.height(context, widget.compact), child: LayoutBuilder(builder: (_, cons) {
               final w = cons.maxWidth;
               final p = _chapterDragValue ?? chapterProgress;
               final isDragging = _chapterDragValue != null;
@@ -417,33 +418,8 @@ class _CardDualProgressBarState extends State<CardDualProgressBar> with WidgetsB
                 onHorizontalDragUpdate: chapterInteractive ? (d) { _chapterScrubSpeed = _scrubScale((d.localPosition.dy - _chapterDragStartDy).abs()); setState(() => _chapterDragValue = ((_chapterDragValue ?? chapterProgress) + d.delta.dx / w * _chapterScrubSpeed).clamp(0.0, 1.0)); } : null,
                 onHorizontalDragEnd: chapterInteractive ? (_) { if (_chapterDragValue != null) { final seekMs = ((chapterStart + _chapterDragValue! * chapterDur) * 1000).round(); _doSeek(seekMs); } setState(() => _chapterDragValue = null); } : null,
                 onTapUp: chapterInteractive ? (d) { final v = (d.localPosition.dx / w).clamp(0.0, 1.0); final seekMs = ((chapterStart + v * chapterDur) * 1000).round(); _doSeek(seekMs); } : null,
-                child: CustomPaint(
-                  size: Size(w, 30),
-                  painter: ChapterPillPainter(
-                    progress: p,
-                    accent: widget.accent,
-                    wavePhase: 0,
-                    isPlaying: isPlaying,
-                    isDragging: isDragging,
-                    backgroundColor: cs.surfaceContainerHighest,
-                  ),
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: chName != null
-                          ? MarqueeText(
-                              text: chName,
-                              style: TextStyle(
-                                color: cs.onSurface.withValues(alpha: 0.9),
-                                fontWeight: FontWeight.w600,
-                                fontSize: 12,
-                                letterSpacing: 0.2,
-                              ),
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ),
-                ),
+                child: ForkWavyChapterBar(progress: p, accent: widget.accent, isPlaying: isPlaying,
+                    isDragging: isDragging, name: chName, compact: widget.compact),
               );
             })),
             // Time labels below pill — update during drag

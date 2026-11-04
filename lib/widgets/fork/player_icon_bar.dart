@@ -52,11 +52,17 @@ class ForkPlayerHeader extends StatelessWidget {
 }
 
 extension ForkPlayerBar on CardActionDelegate {
+  /// Whether the pill shows its book button: only once the ebook is known.
+  bool get _forkPillShowsBook => hasEbook && episodeId == null && !isPodcastEpisode;
+
   /// What More lists under the icon bar: every button the row and pill
   /// don't carry, Manage Queue first when the page offers it. Read along is
-  /// left out when the pill's book button already opens it.
+  /// left out when the pill's book button already opens it; Read stays in
+  /// while the pill hides it, since the reader can still find a cached
+  /// ebook or retry the fetch.
   List<String> _forkIconBarOverflow() {
-    final ids = _shownOrder.where((id) => id != '_more' && !_forkIconRowIds.contains(id) && !_forkTopPillIds.contains(id)
+    final ids = _shownOrder.where((id) => id != '_more' && !_forkIconRowIds.contains(id)
+        && (!_forkTopPillIds.contains(id) || (id == 'ebook' && !_forkPillShowsBook && episodeId == null && !isPodcastEpisode))
         && !(id == 'lyrics' && _readAlongInstead && hasEbook)).toList();
     if (onManageQueue != null) ids.insert(0, '_queue');
     return ids;
@@ -96,7 +102,8 @@ extension ForkPlayerBar on CardActionDelegate {
             final r = sleep.timeRemaining;
             label = '${r.inMinutes.toString().padLeft(2, '0')}:${(r.inSeconds % 60).toString().padLeft(2, '0')}';
           } else if (on) {
-            label = '${sleep.chaptersRemaining}ch';
+            // The service's own short label: "3 ch", or "ep" for episodes.
+            label = sleep.displayLabel;
           }
           return _PlainIconButton(
             icon: on ? Icons.nightlight_round : Icons.nightlight_round_outlined,
@@ -114,31 +121,43 @@ extension ForkPlayerBar on CardActionDelegate {
       ),
     ];
     // Space the five by their centres, edges flush with the row, so the
-    // wider speed pill doesn't pull the icons off an even rhythm. On a row
-    // too narrow for that the gaps bottom out at zero.
+    // wider speed pill doesn't pull the icons off an even rhythm. A row too
+    // narrow for that (under 300dp) spaces them evenly instead, and one
+    // narrower than the five themselves scales them down.
+    const minWidth = PlayerSpeedPill.width + 4 * _PlainIconButton.size;
     return LayoutBuilder(builder: (context, constraints) {
-      final step = (constraints.maxWidth - PlayerSpeedPill.width / 2 - _PlainIconButton.size / 2) / 4;
-      final firstGap = (step - PlayerSpeedPill.width / 2 - _PlainIconButton.size / 2).clamp(0.0, double.infinity);
-      final gap = (step - _PlainIconButton.size).clamp(0.0, double.infinity);
-      return Row(children: [
-        for (var i = 0; i < items.length; i++) ...[
-          if (i == 1) SizedBox(width: firstGap) else if (i > 1) SizedBox(width: gap),
-          items[i],
-        ],
-      ]);
+      final width = constraints.maxWidth;
+      final step = (width - PlayerSpeedPill.width / 2 - _PlainIconButton.size / 2) / 4;
+      final firstGap = step - PlayerSpeedPill.width / 2 - _PlainIconButton.size / 2;
+      if (firstGap >= 0) {
+        final gap = step - _PlainIconButton.size;
+        return Row(children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i == 1) SizedBox(width: firstGap) else if (i > 1) SizedBox(width: gap),
+            items[i],
+          ],
+        ]);
+      }
+      return FittedBox(
+        fit: BoxFit.scaleDown,
+        child: SizedBox(
+          width: width < minWidth ? minWidth : width,
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: items),
+        ),
+      );
     });
   }
 
   /// The pill at the player's top right: read (read along when the book's
   /// epub can follow the audio, the plain reader otherwise), download, more.
   ///
-  /// [dense] is the Now Playing page header's size, next to its refresh
-  /// button: smaller icons and the header's hairline border.
+  /// [dense] is the Now Playing page header's size: smaller icons and the
+  /// header's hairline border.
   Widget buildTopPill(Color accent, TextTheme tt, {bool dense = false}) {
     final cs = Theme.of(context).colorScheme;
     final fg = dense ? cs.onSurfaceVariant : cs.onSurface.withValues(alpha: _inkAlpha(0.85, 1.0));
     final divider = Container(width: 1, height: dense ? 16 : 22, color: cs.onSurface.withValues(alpha: dense ? 0.12 : 0.18));
-    final showBook = hasEbook && episodeId == null && !isPodcastEpisode;
+    final showBook = _forkPillShowsBook;
     final iconSize = dense ? 18.0 : 24.0;
     // Every button keeps Material's 48dp tap target; the dense pill only
     // looks 32dp tall, its buttons reach past it top and bottom.

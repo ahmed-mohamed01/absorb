@@ -114,7 +114,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   /// gets another go.
   void _forkLoadSeriesBooks(ApiService api) {
     final metadata = (_item?['media'] as Map?)?['metadata'] as Map? ?? const {};
-    final series = forkMainSeries(metadata['series'] as List<dynamic>? ?? const [])?.main;
+    final series = forkMainSeries(forkSeriesEntries(metadata['series']))?.main;
     final seriesId = series is Map ? series['id'] as String? : null;
     final libraryId = _item?['libraryId'] as String?;
     final inFlight = _ui.seriesRequested && !_ui.seriesFetched;
@@ -148,7 +148,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     final authorName = metadata['authorName'] as String? ?? '';
     final descRaw = metadata['description'] as String? ?? '';
     final duration = (media['duration'] as num?)?.toDouble() ?? 0;
-    final seriesEntries = metadata['series'] as List<dynamic>? ?? [];
+    final seriesEntries = forkSeriesEntries(metadata['series']);
     final genres = (metadata['genres'] as List<dynamic>?)?.cast<String>() ?? [];
     final tags = ((media['tags'] as List<dynamic>?) ?? (metadata['tags'] as List<dynamic>?) ?? const []).cast<String>();
     final publisher = metadata['publisher'] as String? ?? '';

@@ -48,6 +48,10 @@ String forkSeriesLabel(dynamic s) {
   return name.isEmpty || seq.isEmpty ? name : '$name #$seq';
 }
 
+/// A book's `series` as a list. The server sends a list; a series sheet
+/// hands the item over with one map, the number it lists the book under.
+List<dynamic> forkSeriesEntries(Object? raw) => raw is List ? raw : raw is Map ? [raw] : const [];
+
 /// The series the pill shows (the first with a number) and the rest, which a
 /// "+N" offers. Null when the book is in no series.
 ({dynamic main, List<dynamic> others})? forkMainSeries(List<dynamic> series) {
@@ -121,8 +125,7 @@ List<Map<String, dynamic>> forkSeriesBooksToShow(List<dynamic> raw,
 /// map) matched by id or name, else the joined `seriesName` ("Name #3, ...")
 /// that minified items carry. Empty when it has none.
 String _seriesSequence(Map metadata, String seriesId, String seriesName) {
-  final raw = metadata['series'];
-  final list = raw is List ? raw : raw is Map ? [raw] : const [];
+  final list = forkSeriesEntries(metadata['series']);
   final wanted = seriesName.trim().toLowerCase();
   for (final s in list) {
     if (s is! Map) continue;

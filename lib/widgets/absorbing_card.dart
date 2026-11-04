@@ -1093,12 +1093,12 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
                     builder: (context, buttonsConstraints) => FittedBox(
                     fit: BoxFit.scaleDown,
                     child: SizedBox(
-                      width: buttonsConstraints.maxWidth - 40,
+                      width: buttonsConstraints.maxWidth,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           _makeActions().buildIconRow(accent, tt),
-                          SizedBox(height: compact ? 4 : 8),
+                          SizedBox(height: compact ? 8 : 16),
                         ],
                       ),
                     ),

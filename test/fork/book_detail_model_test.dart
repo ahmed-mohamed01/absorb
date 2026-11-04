@@ -2,6 +2,19 @@ import 'package:absorb/widgets/fork/book_detail_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('forkSeriesEntries', () {
+    test('wraps the single map a series sheet hands over', () {
+      final s = {'id': 'a', 'name': 'The Calamitous Bob', 'sequence': '2'};
+      expect(forkSeriesEntries(s), [s]);
+      expect(forkMainSeries(forkSeriesEntries(s))!.main, s);
+    });
+
+    test('keeps a list and turns nothing into none', () {
+      expect(forkSeriesEntries([{'name': 'A'}]), [{'name': 'A'}]);
+      expect(forkSeriesEntries(null), isEmpty);
+    });
+  });
+
   group('forkDisplayTitle', () {
     test('moves a ": subtitle" off the title when the book has none', () {
       final t = forkDisplayTitle(title: 'Velocity Weapon: A Novel', subtitle: '', series: const []);

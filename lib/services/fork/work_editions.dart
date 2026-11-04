@@ -73,7 +73,8 @@ Map<String, dynamic> missingEditionRequestPayload(Map<String, dynamic> metadata,
     for (final a in (metadata['authors'] as List?) ?? const [])
       ?clip(a is Map ? a['name'] : a, 255),
   ];
-  final series = (metadata['series'] as List?)?.whereType<Map>().firstOrNull;
+  final rawSeries = metadata['series'];
+  final series = rawSeries is Map ? rawSeries : (rawSeries is List ? rawSeries.whereType<Map>().firstOrNull : null);
   final isbn = clip(metadata['isbn'], 20)?.replaceAll('-', '');
   final year = int.tryParse('${metadata['publishedYear'] ?? ''}');
   return {

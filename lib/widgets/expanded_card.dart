@@ -219,7 +219,10 @@ class _ExpandedCardState extends State<ExpandedCard> {
     _fetchChaptersIfNeeded();
     // Always derive the cover scheme (accent + gradient colors); only build the
     // blurred bitmap when the blurred background is actually in use.
-    _deriveCoverScheme();
+    // After the first frame: deriving reads Theme.of, which initState can't.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _deriveCoverScheme();
+    });
     if (_cardBackground == 'blurred') _generateBlur();
   }
 
@@ -770,10 +773,7 @@ class _ExpandedCardState extends State<ExpandedCard> {
                                 final isCastingThis = castService.isCasting && castService.castingItemId == _itemId;
                                 final coverPlaying = isCastingThis ? castService.isPlaying : (_isActive && widget.player.isPlaying);
                                 final coverLoading = _isStarting || (_isActive && widget.player.isLoadingOrBuffering);
-                                // Spare height goes mostly below the cover so it
-                                // stays near the book bar instead of floating
-                                // midway between it and the controls.
-                                return Align(alignment: const Alignment(0, -0.6), child: Column(
+                                return Center(child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Padding(
@@ -973,7 +973,8 @@ class _ExpandedCardState extends State<ExpandedCard> {
                                     ),
                                     SizedBox(height: compact ? 8 : 24),
                                     _makeActions().buildIconRow(accent, tt),
-                                    SizedBox(height: compact ? 8 : 16),
+                                    // One button's height clear of the bottom edge.
+                                    SizedBox(height: compact ? 16 : 48),
                                   ],
                                 ),
                         ),
