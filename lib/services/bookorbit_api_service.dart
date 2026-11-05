@@ -2448,8 +2448,11 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     final slice = all.skip(page * limit).take(limit).toList();
     final results = await _pool(
         slice
+            // A scope is read-only (never in the Add to collection sheet,
+            // which needs every book), so its first page does; its sheet
+            // loads the rest as it scrolls.
             .map((e) => () => e.scope
-                ? _scopeCollection(e.entry, maxBooks: 500)
+                ? _scopeCollection(e.entry, maxBooks: 100)
                 : _collection(e.entry, maxBooks: 500))
             .toList(),
         width: 4);
@@ -2542,9 +2545,10 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     // they cached is reused.
     final slot = coverSlot != null
         ? (kind == 'thumbnail' ? coverSlot : '$coverSlot&strict=true')
-        : coverRatio != null
-            ? (coverRatio >= 0.99 ? 'audio' : 'ebook')
-            : _listCoverSlot(itemId);
+        : _forkOnlyCoverSlot(cv) ??
+            (coverRatio != null
+                ? (coverRatio >= 0.99 ? 'audio' : 'ebook')
+                : _listCoverSlot(itemId));
     return BookOrbitMediaProxy.instance.urlFor('/api/v1/books/$itemId/$kind?medium=$slot$t');
   }
 
@@ -4529,7 +4533,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     } catch (e) {
       debugPrint('[BookOrbit] Continue-listening positions failed: $e');
     }
-    await _addEbookPercents(byId, reading);
+    _forkAddEbookPercentsLater(byId, reading);
     return byId.values.toList();
   }
 

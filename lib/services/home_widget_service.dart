@@ -19,6 +19,7 @@ import 'scoped_prefs.dart';
 import 'user_account_service.dart';
 import 'wear_player_service.dart';
 import 'sleep_timer_service.dart';
+import 'fork/stats_widget_presence.dart';
 
 const String _androidWidgetName = 'NowPlayingWidget';
 const String _androidWidgetCompactName = 'NowPlayingWidgetCompact';
@@ -150,8 +151,9 @@ class HomeWidgetService {
 
     // Push current state in case a widget already exists.
     _scheduleUpdate();
-    // Fetch stats in the background so the StatsWidget renders fresh on launch.
-    refreshStats();
+    // Fetch stats in the background so the StatsWidget renders fresh on
+    // launch, after the first screens have had the connection to themselves.
+    Timer(const Duration(seconds: 5), () => unawaited(refreshStats()));
 
     // Poll stats so "today" keeps ticking on the widget during long listening
     // sessions. Stopped while backgrounded-and-paused (see onAppBackgrounded)
@@ -1139,6 +1141,10 @@ class HomeWidgetService {
         );
         return;
       }
+    }
+    if (!await forkWidgetPlaced(androidName: _androidWidgetStatsName, iOSKind: _iOSStatsWidgetName)) { // Fork
+      debugPrint('[StatsWidget] Skipping refresh: no Stats widget on the home screen');
+      return;
     }
     _refreshingStats = true;
     try {

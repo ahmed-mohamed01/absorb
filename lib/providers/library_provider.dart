@@ -38,6 +38,7 @@ import '../services/fork/library_flow.dart';
 part '_lp_state.dart';
 part '_lp_core.dart';
 part '_lp_absorbing.dart';
+part 'fork/late_ebook_progress.dart'; // Fork
 
 class LibraryProvider extends ChangeNotifier
     with _StateMixin, _CoreMixin, _AbsorbingMixin {
@@ -68,6 +69,7 @@ class LibraryProvider extends ChangeNotifier
 
   LibraryProvider() {
     SiriService.libraryItems = _itemsForSiri;
+    forkLateEbookProgress.addListener(() => unawaited(_forkMergeLateEbookProgress())); // Fork
     // Registered once at provider construction so the audio service can
     // notify this provider on completion/playback events even when the
     // Flutter UI wasn't foregrounded yet (e.g. Android Auto cold-start,

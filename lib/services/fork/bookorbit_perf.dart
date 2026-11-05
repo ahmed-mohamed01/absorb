@@ -64,7 +64,34 @@ void _forkRememberItem(Map<String, dynamic> item) {
 
 /// Run from `clearCaches` (sign-out, account switch) through
 /// `_watchlistClearCaches`.
+/// The one slot a book with a single cover has it in, read off its
+/// `coverVersion` (`face:faceStamp:otherStamp`, a missing slot stamped `-`),
+/// else null (two covers, or a legacy version). BookOrbit answers a request
+/// for the empty slot with the other one, so without this the same picture
+/// was fetched and cached once per URL: square shelves, portrait shelves
+/// and the detail page each asked for a different slot.
+String? _forkOnlyCoverSlot(String? version) {
+  // The stamps are ISO times, which hold colons too.
+  if (version == null) return null;
+  final String face;
+  if (version.startsWith('audio:')) {
+    face = 'audio';
+  } else if (version.startsWith('ebook:')) {
+    face = 'ebook';
+  } else {
+    return null;
+  }
+  final hasFace = !version.startsWith('$face:-:');
+  final hasOther = !version.endsWith(':-');
+  if (hasFace == hasOther) return null;
+  return hasFace ? face : (face == 'audio' ? 'ebook' : 'audio');
+}
+
+/// Bumped by every cache clear, so work started before one can tell.
+int _forkCacheGeneration = 0;
+
 void _forkPerfClearCaches() {
+  _forkCacheGeneration++;
   _forkDashboardClearCaches();
   _forkNoManifest.clear();
   _forkItems.clear();
@@ -73,7 +100,39 @@ void _forkPerfClearCaches() {
   ForkCacheClears.run();
 }
 
+/// The ebook positions `_allProgress` reads one request per book (an
+/// audiobook with its own ebook, a narrated EPUB), which land after it has
+/// answered so the progress everything waits on isn't held up by them:
+/// the books whose `ebookProgress` or `ebookLocation` changed, and whether
+/// Continue Reading's extra cards changed.
+final ValueNotifier<({Map<String, Map<String, dynamic>> ebook, bool cardsChanged})?> forkLateEbookProgress =
+    ValueNotifier(null);
+
 extension _ForkBookOrbitPerf on BookOrbitApiService {
+  /// `_addEbookPercents` behind `_allProgress`'s answer; it fills the same
+  /// maps in, then [forkLateEbookProgress] gets the books whose ebook
+  /// position it changed. Dropped when the caches were cleared meanwhile
+  /// (sign-out, account switch), so one user's pages never reach another.
+  void _forkAddEbookPercentsLater(Map<String, Map<String, dynamic>> byId, Map<String, Map<String, dynamic>> reading) {
+    final generation = _forkCacheGeneration;
+    final before = {...BookOrbitApiService._ebookReadCards.keys};
+    final was = {for (final e in byId.entries) e.key: (e.value['ebookProgress'], e.value['ebookLocation'])};
+    unawaited(_addEbookPercents(byId, reading).then((_) {
+      if (generation != _forkCacheGeneration) return;
+      final after = BookOrbitApiService._ebookReadCards.keys.toSet();
+      final cardsChanged = before.length != after.length || !after.containsAll(before);
+      final ebook = {
+        for (final e in byId.entries)
+          if (e.value['ebookProgress'] != null && (e.value['ebookProgress'], e.value['ebookLocation']) != was[e.key])
+            e.key: {'ebookProgress': e.value['ebookProgress'], 'ebookLocation': ?e.value['ebookLocation']},
+      };
+      if (ebook.isEmpty && !cardsChanged) return;
+      forkLateEbookProgress.value = (ebook: ebook, cardsChanged: cardsChanged);
+    }).catchError((Object e) {
+      debugPrint('[BookOrbit] Ebook positions failed: $e');
+    }));
+  }
+
   /// `_boGet`: a response `_forkWarmItem` already fetched, else the joined
   /// request with the manifest-404 memo.
   Future<dynamic> _forkGet(String path, Map<String, dynamic>? query, Duration timeout) {
@@ -228,6 +287,9 @@ Map<String, dynamic>? forkCachedBookOrbitItem(String itemId) {
 }
 
 /// Test seams for the seed caches (the maps are private to this library).
+@visibleForTesting
+String? forkPerfTestOnlyCoverSlot(String? version) => _forkOnlyCoverSlot(version);
+
 @visibleForTesting
 void forkPerfTestRemember(Map<String, dynamic> item) => _forkRememberItem(item);
 

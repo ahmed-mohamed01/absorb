@@ -118,4 +118,22 @@ void main() {
       expect((seed['userMediaProgress'] as Map)['progress'], 0.4);
     });
   });
+
+  group('one cover URL per single-cover book', () {
+    const t = '2026-11-04T23:10:28.764Z';
+    test('a book with only its face cover asks for that slot', () {
+      expect(forkPerfTestOnlyCoverSlot('audio:$t:-'), 'audio');
+      expect(forkPerfTestOnlyCoverSlot('ebook:$t:-'), 'ebook');
+    });
+    test('a book with only its other cover asks for the other slot', () {
+      expect(forkPerfTestOnlyCoverSlot('audio:-:$t'), 'ebook');
+      expect(forkPerfTestOnlyCoverSlot('ebook:-:$t'), 'audio');
+    });
+    test('two covers, none, or a legacy version leave the choice to the caller', () {
+      expect(forkPerfTestOnlyCoverSlot('audio:$t:$t'), isNull);
+      expect(forkPerfTestOnlyCoverSlot('audio:-:-'), isNull);
+      expect(forkPerfTestOnlyCoverSlot('legacy:$t'), isNull);
+      expect(forkPerfTestOnlyCoverSlot(null), isNull);
+    });
+  });
 }

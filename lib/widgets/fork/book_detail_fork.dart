@@ -84,6 +84,9 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
     setState(() => _item = null);
   }
 
+  /// Whether the sheet still shows the seed, not yet the fetched item.
+  bool get _forkShowingSeed => _item != null && identical(_item, _forkSeeds[this]);
+
   /// The card's thumbnail URL on BookOrbit (already in the image cache from
   /// the shelf), which gives the same accent as the full cover.
   String? get _forkPaletteUrl {

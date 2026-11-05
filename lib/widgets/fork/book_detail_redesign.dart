@@ -242,7 +242,9 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     ];
 
     final similar = forkSimilarToShow(_similar, itemId: widget.itemId, title: title);
-    final hasAbout = descRaw.isNotEmpty || genres.isNotEmpty || tags.isNotEmpty;
+    // A seed from a shelf card has no description, so its chips would show
+    // open and then fold behind Read more when the full detail lands.
+    final hasAbout = descRaw.isNotEmpty || ((genres.isNotEmpty || tags.isNotEmpty) && !_forkShowingSeed);
     final personalNote = ((_item?['bookOrbit'] as Map?)?['personalNote'] as String?)?.trim() ?? '';
     final similarReady = similar.isNotEmpty && !lib.isOffline;
     final seriesReady = _ui.seriesBooks.isNotEmpty && !lib.isOffline;

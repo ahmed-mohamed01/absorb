@@ -50,6 +50,7 @@ import '../widgets/new_list_flow.dart';
 import '../services/fork/watchlist_info.dart';
 import '../widgets/fork/watchlist_sort_sheet.dart';
 import 'fork/watchlist_library_refresh.dart';
+import 'fork/deferred_load.dart';
 import '../services/fork/single_book_series.dart';
 
 /// Responsive grid column count based on available width and the cover size
@@ -1052,7 +1053,15 @@ class LibraryScreenState extends State<LibraryScreen>
     }
   }
 
-  Future<void> _loadFilterData() async {
+  // Fork: the filter sheet's lists (every author and series on BookOrbit,
+  // about a megabyte) wait 3 s so the first page and its covers go first;
+  // searching or opening the sheet fetches them at once.
+  late final _filterData = ForkDeferredLoad(const Duration(seconds: 3), () async {
+    if (mounted) await _fetchFilterData();
+  });
+  void _loadFilterData() => _filterData.schedule();
+
+  Future<void> _fetchFilterData() async {
     final auth = context.read<AuthProvider>();
     final lib = context.read<LibraryProvider>();
     final api = auth.apiService;
@@ -1132,12 +1141,22 @@ class LibraryScreenState extends State<LibraryScreen>
             .where((value) => value.isNotEmpty)
             .toList()
           ..sort();
+        // A search made before these arrived matched no genres or tags.
+        if (_isInSearchMode && !lib.isPodcastLibrary) {
+          final q = _searchController.text.trim().toLowerCase();
+          _searchTagResults =
+              _availableTags.where((t) => t.toLowerCase().contains(q)).toList();
+          _searchGenreResults = _availableGenres
+              .where((g) => g.toLowerCase().contains(q))
+              .toList();
+        }
       });
     }
   }
 
   @override
   void dispose() {
+    _filterData.dispose();
     SocketService().removeAuthorsChangedListener(_onAuthorsChanged);
     SocketService().removeItemRemovedListener(_onItemRemoved);
     _authorsRefreshDebounce?.cancel();
@@ -2020,9 +2039,13 @@ class LibraryScreenState extends State<LibraryScreen>
       for (final c in _collections) {...c, '_isPlaylist': false},
       for (final p in _playlists) {...p, '_isPlaylist': true},
     ];
+    // A BookOrbit list carries its full count; a Smart Scope loads only
+    // its first page of books.
     int countOf(Map<String, dynamic> e) => e['_isPlaylist'] == true
         ? (e['items'] as List<dynamic>?)?.length ?? 0
-        : (e['books'] as List<dynamic>?)?.length ?? 0;
+        : ((e['bookOrbit'] as Map?)?['total'] as num?)?.toInt() ??
+            (e['books'] as List<dynamic>?)?.length ??
+            0;
     int asc(Map<String, dynamic> a, Map<String, dynamic> b) {
       switch (_listsSort) {
         case LibrarySort.recentlyAdded:
@@ -2300,6 +2323,7 @@ class LibraryScreenState extends State<LibraryScreen>
     final lib = context.read<LibraryProvider>();
     final api = auth.apiService;
     if (api == null || lib.selectedLibraryId == null) return;
+    unawaited(_filterData.now());
 
     setState(() => _isSearching = true);
     final gen = ++_searchGen;
@@ -2575,6 +2599,8 @@ class LibraryScreenState extends State<LibraryScreen>
       if (_currentTab == 0) showWatchlistSortSheet(context, onChanged: _applyWatchlistSort);
       return;
     }
+    await _filterData.now();
+    if (!context.mounted) return;
     final LibraryTab tab;
     final LibrarySort currentSort;
     final bool currentSortAsc;
@@ -3132,8 +3158,9 @@ class LibraryScreenState extends State<LibraryScreen>
       // (we already wrap the whole NestedScrollView in
       // SafeArea above).
       primary: false,
+      // Header (~100) + 8 gap + the 56 tall search bar.
       toolbarHeight: _isInSearchMode
-          ? 156
+          ? 164
           : ((_filter != LibraryFilter.none ||
                     _seriesFilter != SeriesFilter.none)
                 ? 204

@@ -1909,7 +1909,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
   void _onRemoteCollectionUpdated() {
     loadPersonalizedView(force: true);
-    loadCollections();
+    loadCollections(force: true);
   }
 
   void _onRemotePlaylistUpdated() {
@@ -2424,10 +2424,23 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
   // ── Collections ──
 
+  // When the collections last loaded and for which library, so opening the
+  // Library right after Home doesn't fetch every list again.
+  DateTime? _collectionsLoadedAt;
+  String? _collectionsLoadedFor;
+
   Future<void> loadCollections({bool force = false}) async {
     if (_api == null || _selectedLibraryId == null || isOffline) return;
 
     final libId = _selectedLibraryId!;
+    final at = _collectionsLoadedAt;
+    if (!force &&
+        at != null &&
+        _collectionsLoadedFor == libId &&
+        _collections.isNotEmpty &&
+        DateTime.now().difference(at) < const Duration(minutes: 1)) {
+      return;
+    }
     final existing = _collectionsInFlight;
     if (existing != null && _collectionsInFlightFor == libId) {
       await existing;
@@ -2453,7 +2466,11 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     _isLoadingCollections = true;
     try {
       final loaded = await _api!.getLibraryCollections(libId);
-      if (loaded != null && _selectedLibraryId == libId) _collections = loaded;
+      if (loaded != null && _selectedLibraryId == libId) {
+        _collections = loaded;
+        _collectionsLoadedAt = DateTime.now();
+        _collectionsLoadedFor = libId;
+      }
     } catch (_) {}
     _isLoadingCollections = false;
     notifyListeners();
