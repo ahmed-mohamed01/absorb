@@ -51,6 +51,9 @@ class EditionSyncBookStateWire {
   final bool canRunNow;
   final bool canRetry;
 
+  /// The book file that is the timing index, once one is built.
+  final int? indexFileId;
+
   /// Why sync is off for the book (effectiveReason); null while it's on.
   final EditionSyncOffReason? offReason;
   const EditionSyncBookStateWire({
@@ -68,6 +71,7 @@ class EditionSyncBookStateWire {
     this.whisperFallback = false,
     this.canRunNow = false,
     this.canRetry = false,
+    this.indexFileId,
     this.offReason,
   });
 
@@ -79,6 +83,7 @@ class EditionSyncBookStateWire {
       syncEnabled: j['syncEnabled'] == true,
       pinned: j['pinned'] == true,
       runActive: j['runActive'] == true,
+      indexFileId: _psInt(index['indexFileId']),
       status: _psEnum(EditionSyncIndexStatus.values, index['status']) ?? EditionSyncIndexStatus.none,
       stage: _psString(index['stage']),
       progress: _psDouble(index['progress']),

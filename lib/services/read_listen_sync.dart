@@ -16,6 +16,7 @@ import 'audio_player_service.dart';
 import 'ebook_cache.dart';
 import 'ebook_history.dart';
 import 'epub_book_text.dart';
+import 'fork/timing_index_narration.dart';
 import 'narration_service.dart';
 import 'progress_sync_service.dart';
 import 'scoped_prefs.dart';
@@ -307,6 +308,8 @@ class ReadListenSync {
     final media = item['media'] as Map<String, dynamic>? ?? const {};
     // A book whose audio is its EPUB's own narration keeps them together.
     if (media['narration'] != null) return null;
+    // Fork: BookOrbit keeps them together itself through its timing index.
+    if (media['timingIndex'] != null && await forkTimingIndexKeepsSpots(api, itemId)) return null;
     final duration = (media['duration'] as num?)?.toDouble() ?? 0;
     final ebook = resolveEbookFile(item);
     if (duration <= 0 || ebook == null || ebookExtFromFile(ebook) != '.epub') return null;

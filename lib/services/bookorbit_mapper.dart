@@ -1,4 +1,5 @@
 import 'bookorbit_match.dart' show bookOrbitProviderIdFields;
+import 'fork/timing_index_format.dart';
 
 /// Turns BookOrbit API payloads into the Audiobookshelf JSON shapes the rest
 /// of the app reads. Pure functions only, so the shapes can be unit tested
@@ -317,6 +318,10 @@ class BookOrbitMapper {
     final readAlong = audioFiles.isEmpty ? null : matchingReadAlong(detail, contentFiles);
     final ebook = narrated ?? readAlong?.file ?? _primaryEbook(contentFiles);
     final ebookFormat = ebook == null ? null : _format(ebook);
+    // Fork: BookOrbit's edition sync timing index beside the audiobook and a
+    // plain EPUB, which read along can follow without a read-along EPUB.
+    final timingIndex = forkTimingIndexMedia(files,
+        plainEpub: narrated == null && readAlong == null && audioFiles.isNotEmpty && ebookFormat == 'epub');
     final duration = narrated != null
         ? narrationSeconds
         : _bookDurationSeconds(manifest, audioMeta, offset);
@@ -347,6 +352,7 @@ class BookOrbitMapper {
           if (_primaryEbook(contentFiles) case final plain? when plain != readAlong.file)
             'plainEbookFile': _ebookFileEntry(plain),
         },
+      if (timingIndex != null) 'timingIndex': timingIndex,
       'numTracks': audioFiles.length,
       'numAudioFiles': audioFiles.length,
       'numChapters': chapters.length,

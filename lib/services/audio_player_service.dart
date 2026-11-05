@@ -10,6 +10,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
 import 'download_service.dart';
+import 'fork/timing_index_narration.dart';
 import 'narrated_books.dart';
 import 'narration_stream.dart';
 import 'offline_source.dart';
@@ -3684,6 +3685,9 @@ class AudioPlayerService extends ChangeNotifier {
   }) async {
     _pauseRequested = false;
     _playFromUi = fromUi;
+    // Fork: a book's timing index is fetched once it plays, so read along
+    // has it by the time the reader opens.
+    if (episodeId == null) unawaited(forkTimingIndexOverlay(api, itemId));
     if (_handler == null) {
       debugPrint('[Player] Handler not yet initialized, waiting…');
       await _initCompleter.future;

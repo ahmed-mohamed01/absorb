@@ -1,3 +1,4 @@
+import 'fork/timing_index_script.dart';
 import 'read_along_script.dart';
 
 /// JavaScript for read along on a narrated EPUB: the sentence the narration
@@ -9,6 +10,7 @@ String narrationBootstrap(int argb, {bool eink = false}) {
       "MO.color = '${cssHex(argb)}';"
       "MO.eink = ${eink ? 'true' : 'false'};"
       '$_body'
+      '$forkNarrationPositionsScript'
       '})();';
 }
 

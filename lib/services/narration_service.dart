@@ -14,6 +14,7 @@ import 'audio_player_service.dart';
 import 'download_service.dart';
 import 'ebook_cache.dart';
 import 'epub_book_text.dart';
+import 'fork/timing_index_narration.dart';
 import 'media_overlay.dart';
 import 'narrated_books.dart';
 import 'progress_sync_service.dart';
@@ -218,6 +219,9 @@ class NarrationService {
         unawaited(_save(itemId, o));
         return (overlay: o, fromServer: true);
       }
+      // Fork: an audiobook and a plain EPUB with BookOrbit's timing index.
+      final indexed = await forkTimingIndexOverlay(api, itemId);
+      if (indexed != null) return (overlay: indexed, fromServer: true);
       final saved = await localOverlay(itemId);
       return saved == null ? null : (overlay: saved, fromServer: true);
     }
@@ -521,7 +525,10 @@ class NarrationService {
   /// Timings that say which sentence the book's audio is on: its narration,
   /// or on BookOrbit a read along EPUB laid on the audiobook beside it.
   Future<MediaOverlay?> sentenceTimings(ApiService? api, String itemId) async =>
-      await audioNarration(api, itemId) ?? (api is BookOrbitApiService ? await api.readAlongTimingsFor(itemId) : null);
+      await audioNarration(api, itemId) ??
+      (api is BookOrbitApiService
+          ? await api.readAlongTimingsFor(itemId) ?? await forkTimingIndexOverlay(api, itemId)
+          : null);
 
   List<String> _trackNames(List<Map<String, dynamic>> tracks) => [
         for (final t in tracks)
@@ -762,12 +769,15 @@ class NarrationService {
     ApiService api,
     Map<String, dynamic> item, {
     OverlayClip? from,
+    double? at,
     String? coverUrl,
   }) async {
     final itemId = item['id'] as String?;
     if (itemId == null) return false;
     final o = await localOverlay(itemId);
-    double? startTime;
+    // Fork: [at] is [from]'s time in the caller's own narration, for one that
+    // isn't kept here (a timing index's).
+    double? startTime = at;
     if (from != null && o != null) {
       final c = o.sameClip(from);
       if (c != null) startTime = o.startOf(c);

@@ -16,6 +16,7 @@ import '../widgets/overlay_toast.dart';
 import 'api_service.dart';
 import 'audio_player_service.dart';
 import 'ebook_cache.dart';
+import 'fork/timing_index_narration.dart';
 import 'narrated_books.dart';
 import 'narration_service.dart';
 import 'offline_source.dart';
@@ -1855,6 +1856,8 @@ class DownloadService extends ChangeNotifier {
     if (!automatic && _autoDownloadBlocked.remove(itemId)) {
       await _saveAutoDownloadBlocks();
     }
+    // Fork: a book's timing index comes down with it, for read along offline.
+    if (episodeId == null) unawaited(forkTimingIndexOverlay(api, itemId));
 
     if (_activeDownloadIds.contains(itemId)) return null;
     if (isDownloaded(itemId)) return null;

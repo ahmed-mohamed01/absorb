@@ -25,6 +25,7 @@ import '../services/download_service.dart';
 import '../services/ebook_annotation_service.dart';
 import '../services/ebook_cache.dart';
 import '../services/find_in_ebook.dart';
+import '../services/fork/timing_index_narration.dart';
 import '../services/highlight_sync.dart';
 import '../services/progress_sync_service.dart';
 import '../services/reader_font_service.dart';
@@ -3899,6 +3900,9 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
       await Future.delayed(const Duration(milliseconds: 500));
     }
     if (!mounted) return;
+    // Fork: a timing index still loading would be taken for none.
+    await _narrationLookup?.timeout(const Duration(seconds: 8), onTimeout: () {});
+    if (!mounted) return;
     if (_hasAudio && !_useNarration && await PlayerSettings.getSyncReadingListening()) {
       // Kept in sync: listening that got ahead moves the page by itself.
       final cfi = await ReadListenSync.instance.ebookSpotForReader(widget.itemId);
@@ -4454,6 +4458,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     final n = _narration;
     if (n == null || raw is! String || raw.isEmpty) return null;
     final page = jsonDecode(raw) as Map<String, dynamic>;
+    if (page['bad'] == true) _narrationDrop(); // Fork
     final href = page['href'] as String? ?? '';
     final byId = <String, OverlayClip>{};
     for (final c in n.clips) {
@@ -4472,7 +4477,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     final wc = _epubController?.webViewController;
     if (_narration == null || wc == null) return null;
     try {
-      await wc.evaluateJavascript(source: _narrationBootstrapSource());
+      await _narrationInstall();
       return _narrationClipIn(await wc.evaluateJavascript(
           source: 'window.__absorbMO ? __absorbMO.onPage() : ""'));
     } catch (e) {
@@ -4519,7 +4524,8 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     if (item == null || !mounted) return false;
     var ok = false;
     try {
-      ok = await NarrationService.instance.play(api, item, from: from, coverUrl: cover);
+      ok = await NarrationService.instance
+          .play(api, item, from: from, at: from == null ? null : n?.startOf(from), coverUrl: cover);
     } catch (e) {
       debugPrint('[ReadAlong] starting the narration failed: $e');
     }
@@ -4535,7 +4541,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     if (n == null || wc == null) return;
     OverlayClip? clip;
     try {
-      await wc.evaluateJavascript(source: _narrationBootstrapSource());
+      await _narrationInstall();
       clip = _narrationClipIn(await wc.evaluateJavascript(
           source: 'window.__absorbMO ? __absorbMO.idsAt(${jsonEncode(cfi)}) : ""'));
     } catch (e) {
@@ -4597,7 +4603,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     if (clip == null || id == null || wc == null) return;
     debugPrint('[ReadAlong] opened while the narration is at ${clip.textHref}#$id - going there');
     _rememberSpot(EbookSpotReason.beforeSync);
-    await wc.evaluateJavascript(source: _narrationBootstrapSource());
+    await _narrationInstall();
     final go = 'window.__absorbMO && __absorbMO.go(${jsonEncode(clip.textHref)}, ${jsonEncode(id)})';
     await wc.evaluateJavascript(source: go);
     // The font and the first re-displays can still reflow the book after the
@@ -4610,6 +4616,8 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
       final where = await wc.evaluateJavascript(
           source: 'window.__absorbMO ? __absorbMO.where(${jsonEncode(clip.textHref)}, ${jsonEncode(id)}) : ""');
       if (where == 'on' || where == 'missing' || where == null || where == '') continue;
+      if (where == 'mismatch') _narrationDrop(); // Fork
+      if (where == 'mismatch' || where == 'skip') return;
       debugPrint('[ReadAlong] the page settled $where of the narration - going there again');
       await wc.evaluateJavascript(source: go);
     }
@@ -4673,6 +4681,28 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
   String _narrationBootstrapSource() =>
       narrationBootstrap(LyricsService.instance.readAlongColor, eink: PlayerSettings.einkMode);
 
+  /// Puts the narration script in the page. Fork: with where its sentences
+  /// sit, for a book following a timing index.
+  Future<void> _narrationInstall() async {
+    final wc = _epubController?.webViewController;
+    if (wc == null) return;
+    await forkNarrationInstall((s) => wc.evaluateJavascript(source: s), _narrationBootstrapSource(), _narration);
+  }
+
+  /// Fork: the page isn't the text this book's timing index was made from.
+  /// The book is followed by transcribing from here on, as one with no index.
+  void _narrationDrop() {
+    if (_narration == null || !mounted) return;
+    debugPrint('[ReadAlong] ${widget.itemId}: this page is not the text its timing index was made from');
+    final following = _narrationReadAlong;
+    if (following) _stopReadAlong();
+    setState(() {
+      _narration = null;
+      if (following) _readAlongOn = false;
+    });
+    if (following) unawaited(_toggleReadAlong());
+  }
+
   /// Read along from the narration's own timings. A book that isn't playing
   /// starts at the first sentence on the page in view.
   Future<void> _startNarrationReadAlong({bool fromResume = false}) async {
@@ -4698,8 +4728,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
         });
       }
     }
-    await _epubController?.webViewController
-        ?.evaluateJavascript(source: _narrationBootstrapSource());
+    await _narrationInstall();
     _narrationWentTo = null;
     _readAlongColor = LyricsService.instance.readAlongColor;
     if (mounted) {
@@ -4741,7 +4770,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
           source: 'window.__absorbMO ? __absorbMO.show(${jsonEncode(clip.textHref)}, ${jsonEncode(id)}) : ""');
       if (where == '' || where == null) {
         // A layout change remounts the page and its script goes with it.
-        await wc.evaluateJavascript(source: _narrationBootstrapSource());
+        await _narrationInstall();
         where = await wc.evaluateJavascript(
             source: 'window.__absorbMO ? __absorbMO.show(${jsonEncode(clip.textHref)}, ${jsonEncode(id)}) : ""');
       }
@@ -4781,6 +4810,8 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
         debugPrint('[ReadAlong] narration moved to ${clip.textHref}#$id');
         await wc.evaluateJavascript(
             source: 'window.__absorbMO && __absorbMO.go(${jsonEncode(clip.textHref)}, ${jsonEncode(id)})');
+      } else if (where == 'mismatch') {
+        _narrationDrop();
       }
     } catch (e) {
       debugPrint('[ReadAlong] narration tick failed: $e');

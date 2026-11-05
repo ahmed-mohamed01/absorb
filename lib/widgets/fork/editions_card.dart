@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import '../../services/ebook_cache.dart';
 import '../../services/narration_service.dart';
 import '../../services/fork/plain_ebook_copy.dart';
 import '../../services/fork/position_sync_chain.dart';
+import '../../services/fork/timing_index_narration.dart';
 import '../../services/fork/work_editions.dart';
 import '../absorbing_shared.dart' show DownloadWideButton;
 import '../overlay_toast.dart';
@@ -409,7 +411,12 @@ class _EbookDownloadButtonState extends State<_EbookDownloadButton> {
         await NarrationService.instance.readerFile(widget.api, widget.itemId, widget.ebookFile, widget.title);
       }
       // Read-along offline also needs its timings, which the reader keeps.
-      if (widget.readAlong) await NarrationService.instance.overlayFor(widget.api, widget.itemId);
+      // The plain ebook's come from the book's timing index, if it has one.
+      if (widget.readAlong) {
+        await NarrationService.instance.overlayFor(widget.api, widget.itemId);
+      } else {
+        unawaited(forkTimingIndexOverlay(widget.api, widget.itemId));
+      }
       // As the reader does: an ebook-only book becomes a download, a book
       // with audio keeps the ebook beside it.
       final registered =

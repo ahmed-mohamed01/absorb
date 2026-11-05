@@ -40,6 +40,7 @@ part 'fork/bookorbit_widgets.dart';
 part 'fork/bookorbit_position_sync.dart';
 part 'fork/bookorbit_watchlist.dart';
 part 'fork/bookorbit_perf.dart';
+part 'fork/bookorbit_timing_index.dart';
 part 'fork/bookorbit_library_picker.dart';
 part 'bookorbit_email_api.dart';
 
