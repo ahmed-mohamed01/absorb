@@ -1358,9 +1358,26 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
   /// Playing header (outside this card) rebuilds.
   static final headerTick = ValueNotifier<int>(0);
 
+  bool _inTree = true;
+
+  @override
+  void activate() {
+    super.activate();
+    _inTree = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) => headerTick.value++);
+  }
+
+  @override
+  void deactivate() {
+    _inTree = false;
+    super.deactivate();
+  }
+
   /// Read / download / more for the Now Playing page header. [onManageQueue]
   /// puts the page's queue sheet at the top of More.
-  Widget buildHeaderPill(BuildContext headerContext, {VoidCallback? onManageQueue}) {
+  /// Null while this card is out of the tree: its context can't be used then.
+  Widget? buildHeaderPill(BuildContext headerContext, {VoidCallback? onManageQueue}) {
+    if (!_inTree) return null;
     final tt = Theme.of(headerContext).textTheme;
     final accent = (PlayerSettings.einkMode ? null : _coverScheme)?.primary ??
         Theme.of(headerContext).colorScheme.primary;
