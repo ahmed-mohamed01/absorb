@@ -2250,11 +2250,12 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
 
   /// Up to [maxBooks] of a collection's or scope's books, plus how many it
   /// holds in all.
-  Future<({List<Map<String, dynamic>> books, int total})> _pagedBooks(String path, int maxBooks) async {
+  Future<({List<Map<String, dynamic>> books, int total})> _pagedBooks(String path, int maxBooks,
+      {Future<Map<String, dynamic>> Function(int page)? fetch}) async {
     final books = <Map<String, dynamic>>[];
     var total = 0;
     for (var page = 0; page < 40 && books.length < maxBooks; page++) {
-      final res = await _boGet(path, {'page': page, 'size': 100}) as Map<String, dynamic>;
+      final res = fetch != null ? await fetch(page) : await _boGet(path, {'page': page, 'size': 100}) as Map<String, dynamic>;
       final items = (res['items'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>().toList();
       books.addAll(items.map((card) => _cardItem(card)));
       total = (res['total'] as num?)?.toInt() ?? books.length;
@@ -2266,9 +2267,10 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   @override
   Future<List<Map<String, dynamic>>?> collectionBooksPage(String collectionId,
       {required int page, int size = 100}) async {
-    final path = collectionId.startsWith(_scopeIdPrefix)
-        ? '/smart-scopes/${collectionId.substring(_scopeIdPrefix.length)}/books'
-        : '/collections/$collectionId/books';
+    if (collectionId.startsWith(_scopeIdPrefix)) {
+      return _forkScopeItems(collectionId.substring(_scopeIdPrefix.length), page, size);
+    }
+    final path = '/collections/$collectionId/books';
     try {
       final res = await _boGet(path, {'page': page, 'size': size}) as Map<String, dynamic>;
       return (res['items'] as List<dynamic>? ?? const [])
@@ -2328,7 +2330,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     var books = <Map<String, dynamic>>[];
     int? total;
     try {
-      final paged = await _pagedBooks('/smart-scopes/$id/books', maxBooks);
+      final paged = await _pagedBooks('/smart-scopes/$id/books/query', maxBooks, fetch: (page) => _forkScopePage(id, page, 100));
       books = paged.books;
       total = paged.total;
     } on _BoHttpError catch (e) {
@@ -2985,20 +2987,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   @override
   Future<List<BookDockDestination>> bookDockDestinations() async {
     try {
-      final caps = await _boGet('/uploads/capabilities') as Map<String, dynamic>;
-      if (caps['canUploadToLibrary'] != true) return const [];
-      final out = <BookDockDestination>[];
-      for (final lib in (caps['libraries'] as List<dynamic>? ?? const []).whereType<Map>()) {
-        for (final folder in (lib['folders'] as List<dynamic>? ?? const []).whereType<Map>()) {
-          out.add(BookDockDestination(
-            libraryId: '${lib['id']}',
-            libraryName: '${lib['name'] ?? ''}',
-            folderId: '${folder['id']}',
-            folderName: '${folder['name'] ?? ''}',
-          ));
-        }
-      }
-      return out;
+      return await _forkDockDestinations();
     } catch (e) {
       debugPrint('[BookOrbit] Book Dock destinations: $e');
       return const [];
@@ -4756,7 +4745,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     if (fileId == null) return;
     final pct = ((progress ?? 0) * 100).clamp(0.0, 100.0);
     final page = location == null ? null : int.tryParse(location);
-    await _boPost('/books/files/$fileId/progress', {
+    await _forkSaveFileProgress('$fileId', {
       'percentage': pct,
       if (location != null && page == null) 'cfi': location,
       if (page != null) 'pageNumber': page,
@@ -4798,7 +4787,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
       final fileId = row['fileId'];
       if (fileId == null) continue;
       try {
-        await _boDelete('/books/files/$fileId/progress');
+        await _forkClearFileProgress('$fileId');
       } on _BoHttpError catch (e) {
         if (e.status != 404) rethrow;
       }
@@ -4916,8 +4905,11 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     return s.startsWith('bo-session-') ? int.tryParse(s.substring('bo-session-'.length)) : null;
   }
 
-  void _forgetListeningStats() => _recent.removeWhere((k, _) =>
-      k == _key('listening-stats') || k.startsWith(_key('activity-day-')) || k.startsWith(_key('year-stats-')));
+  void _forgetListeningStats() {
+    _recent.removeWhere((k, _) =>
+        k == _key('listening-stats') || k.startsWith(_key('activity-day-')) || k.startsWith(_key('year-stats-')));
+    unawaited(_forkStatsSessionsChanged());
+  }
 
   /// The file a listen is logged against: the audiobook's first file, or
   /// the EPUB that reads itself aloud.
@@ -4990,8 +4982,9 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
           'endedAt': _iso(start.add(Duration(seconds: origSeconds))),
         });
       } else {
-        final fileId = session['boFileId'] == null ? null : '${session['boFileId']}';
-        final reading = session['boReading'] == true;
+        final detail = await _forkSessionDetail(bookId, id, origStart);
+        final fileId = detail?.fileId ?? (session['boFileId'] == null ? null : '${session['boFileId']}');
+        final reading = detail?.reading ?? session['boReading'] == true;
         // A reading session can only be logged again against its own file.
         if (reading && fileId == null) return false;
         await _boDelete('/books/$bookId/sessions/$id');
@@ -5416,7 +5409,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     final total = n.overlay.duration;
     final clip = n.overlay.clipAt(seconds);
     try {
-      await _boPost('/books/files/${n.fileId}/progress', {
+      await _forkSaveFileProgress('${n.fileId}', {
         'percentage': total > 0 ? (seconds / total * 100).clamp(0.0, 100.0) : 0,
         'positionSeconds': math.max(0.0, seconds),
         'mediaOverlayFragment': clip?.textSrc,
@@ -5789,128 +5782,15 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   /// The Stats screen's numbers in Audiobookshelf's shape, plus a
   /// `bookOrbit` block with what only BookOrbit keeps: listening and reading
   /// apart, time of day, where the time was spent, books finished by month,
-  /// and session habits. Every year with activity is read, so totals and
-  /// streaks reach back past January.
-  Future<Map<String, dynamic>> _listeningStats() async {
-    const wait = Duration(seconds: 45);
-    final overview = await _boGet('/user-statistics/activity-overview', null, wait) as Map<String, dynamic>;
-    final calendar = overview['calendar'] as Map? ?? const {};
-    final thisYear = (calendar['year'] as num?)?.toInt();
-    final otherYears = [
-      for (final y in (calendar['availableYears'] as List<dynamic>? ?? const []))
-        if (y is num && y.toInt() != thisYear) y.toInt(),
-    ]..sort((a, b) => b.compareTo(a));
-    Future<Map<String, dynamic>?> optional(String path) async {
-      try {
-        return await _boGet(path, null, wait) as Map<String, dynamic>;
-      } catch (e) {
-        debugPrint('[BookOrbit] Stats: $path failed: $e');
-        return null;
-      }
-    }
-
-    final extra = await Future.wait([
-      optional('/user-statistics/activity-details/genre-time'),
-      optional('/user-statistics/summary'),
-      optional('/user-statistics/activity-details/completion-speed'),
-      for (final y in otherYears.take(10)) optional('/user-statistics/activity-calendar/$y'),
-    ]);
-    final genreTime = extra[0], summary = extra[1], speed = extra[2];
-
-    final total = <String, num>{}, listen = <String, num>{}, read = <String, num>{};
-    void addDays(Object? list) {
-      for (final d in (list as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>()) {
-        final day = d['day'] as String?;
-        if (day == null) continue;
-        final l = (d['listeningSeconds'] as num?) ?? 0;
-        final r = (d['readingSeconds'] as num?) ?? 0;
-        final t = (d['totalSeconds'] as num?) ?? l + r;
-        if (l > 0) listen[day] = l;
-        if (r > 0) read[day] = r;
-        if (t > 0) total[day] = t;
-      }
-    }
-
-    for (final cal in extra.skip(3)) {
-      addDays(cal?['days']);
-    }
-    addDays(calendar['days']);
-    addDays((overview['dailyActivity'] as Map?)?['days']);
-
-    final items = <String, dynamic>{};
-    final genres = <Map<String, dynamic>>[];
-    for (final g in (genreTime?['genres'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>()) {
-      genres.add({'genre': g['genre'], 'time': g['totalSeconds'] ?? 0});
-      for (final a in (g['authors'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>()) {
-        for (final b in (a['books'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>()) {
-          final id = '${b['bookId']}';
-          final prev = (items[id] as Map?)?['timeListening'] as num? ?? 0;
-          items[id] = {
-            'id': id,
-            'timeListening': prev + ((b['totalSeconds'] as num?) ?? 0),
-            'mediaMetadata': {'title': b['title'], 'authorName': a['author']},
-          };
-        }
-      }
-    }
-
-    final rhythm = overview['rhythm'] as Map? ?? const {};
-    final pace = overview['pace'] as Map? ?? const {};
-    num? paceFor(String bucket) => (pace['byMedia'] as List<dynamic>? ?? const [])
-        .whereType<Map>()
-        .where((m) => m['bucket'] == bucket)
-        .map((m) => m['medianDurationSeconds'] as num?)
-        .firstOrNull;
-    return {
-      'totalTime': total.values.fold<num>(0, (sum, v) => sum + v),
-      'items': items,
-      'days': total,
-      'today': ((overview['snapshot'] as Map?)?['today'] as Map?)?['totalSeconds'] as num? ?? 0,
-      'recentSessions': const [],
-      'bookOrbit': {
-        'timezone': overview['timezone'],
-        'listenDays': listen,
-        'readDays': read,
-        'hours': [
-          for (final h in (rhythm['hours'] as List<dynamic>? ?? const []).whereType<Map>())
-            {
-              'hour': h['hour'],
-              'listening': h['listeningSeconds'] ?? 0,
-              'reading': h['readingSeconds'] ?? 0,
-            },
-        ],
-        'peakHour': rhythm['peakHour'],
-        'favoriteDay': rhythm['favoriteDayOfWeek'],
-        'sources': [
-          for (final s in ((overview['sources'] as Map?)?['slices'] as List<dynamic>? ?? const []).whereType<Map>())
-            if (((s['totalSeconds'] as num?) ?? 0) > 0) {'bucket': s['bucket'], 'time': s['totalSeconds']},
-        ],
-        'finishedMonths': [
-          for (final m in ((overview['completion'] as Map?)?['months'] as List<dynamic>? ?? const []).whereType<Map>())
-            {'year': m['year'], 'month': m['month'], 'count': m['count'] ?? 0},
-        ],
-        'genres': genres,
-        'medianSession': pace['medianDurationSeconds'],
-        'medianListen': paceFor('listening'),
-        'medianRead': paceFor('reading'),
-        'medianProgress': pace['medianProgressDelta'],
-        'medianDaysToFinish': speed?['medianDays'],
-        'started': summary?['startedBooks'],
-        'inProgress': summary?['inProgressBooks'],
-        'completed': summary?['completedBooks'],
-        'meanProgress': summary?['meanProgressPercent'],
-        'goalBooks': (overview['goal'] as Map?)?['goalBooks'],
-      },
-    };
-  }
+  /// and session habits. See `_forkListeningStats` for where each comes from.
+  Future<Map<String, dynamic>> _listeningStats() => _forkListeningStats();
 
   /// One day's sessions as BookOrbit lists them. Today keeps changing, so it
   /// is asked again sooner than past days.
   Future<Map<String, dynamic>> _activityDay(String day) {
     final now = DateTime.now();
     final today = day == _dayKey(now) || day == _dayKey(now.toUtc());
-    return _cached('activity-day-$day', Duration(minutes: today ? 1 : 10), () async =>
-        await _boGet('/user-statistics/activity-days/$day', null, const Duration(seconds: 30)) as Map<String, dynamic>);
+    return _cached('activity-day-$day', Duration(minutes: today ? 1 : 10), () => _forkActivityDay(day));
   }
 
   static String _dayKey(DateTime d) =>
@@ -6213,56 +6093,10 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     }
   }
 
-  /// Year in Review from that year's activity calendar and finished books.
+  /// Year in Review from that year's daily time and finished books.
   /// BookOrbit keeps no per-book totals by year, so the books listened, top
   /// authors and narrator are left out.
-  Future<Map<String, dynamic>> _yearStats(int year) async {
-    final now = DateTime.now();
-    final Map<String, dynamic> cal;
-    try {
-      cal = await _boGet('/user-statistics/activity-calendar/$year', null, const Duration(seconds: 30))
-          as Map<String, dynamic>;
-    } on _BoHttpError catch (e) {
-      // Asked for a year before the first one with any activity.
-      if (e.status == 400) return const {};
-      rethrow;
-    }
-    num listen = 0, read = 0, sessions = 0;
-    var activeDays = 0;
-    final byMonth = List<num>.filled(12, 0);
-    for (final d in (cal['days'] as List<dynamic>? ?? const []).whereType<Map<String, dynamic>>()) {
-      final l = (d['listeningSeconds'] as num?) ?? 0;
-      final r = (d['readingSeconds'] as num?) ?? 0;
-      listen += l;
-      read += r;
-      sessions += (d['sessionsCount'] as num?) ?? 0;
-      if (l + r > 0) activeDays++;
-      final month = DateTime.tryParse(d['day'] as String? ?? '')?.month;
-      if (month != null) byMonth[month - 1] += l + r;
-    }
-    var finished = 0;
-    try {
-      final days = (now.difference(DateTime(year)).inDays + 1).clamp(1, 3650);
-      final months = await _boGet('/user-statistics/completion-timeline', {'days': days}) as List<dynamic>;
-      for (final m in months.whereType<Map>()) {
-        if (m['year'] == year) finished += ((m['count'] as num?) ?? 0).toInt();
-      }
-    } catch (e) {
-      debugPrint('[BookOrbit] Finished books for $year failed: $e');
-    }
-    var topMonth = -1;
-    for (var i = 0; i < 12; i++) {
-      if (byMonth[i] > 0 && (topMonth < 0 || byMonth[i] > byMonth[topMonth])) topMonth = i;
-    }
-    return {
-      'totalListeningTime': listen,
-      'bookOrbitReadingTime': read,
-      'bookOrbitActiveDays': activeDays,
-      'totalListeningSessions': sessions,
-      'numBooksFinished': finished,
-      if (topMonth >= 0) 'mostListenedMonth': {'month': topMonth},
-    };
-  }
+  Future<Map<String, dynamic>> _yearStats(int year) => _forkYearStats(year);
 
   /// One page of a book's reading log, the way BookOrbit's Reading Log tab
   /// reads it: every kind of session (reading, listening, any device) plus a

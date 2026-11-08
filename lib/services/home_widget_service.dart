@@ -19,6 +19,7 @@ import 'scoped_prefs.dart';
 import 'user_account_service.dart';
 import 'wear_player_service.dart';
 import 'sleep_timer_service.dart';
+import 'fork/open_routes_model.dart';
 import 'fork/stats_widget_presence.dart';
 
 const String _androidWidgetName = 'NowPlayingWidget';
@@ -1164,8 +1165,8 @@ class HomeWidgetService {
 
       // Both calls failed - the server is unreachable. Don't blow away the
       // widget with zeros; leave whatever it was showing in place.
-      if (stats == null && progress == null) {
-        debugPrint('[StatsWidget] Both fetches failed - keeping last values');
+      if (!forkWidgetStatsUsable(stats, progress)) {
+        debugPrint('[StatsWidget] A fetch failed - keeping last values');
         return;
       }
       _lastStatsFetch = DateTime.now();
