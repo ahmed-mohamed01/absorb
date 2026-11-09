@@ -42,6 +42,9 @@ class _Server {
   /// By call: answer with this status instead.
   final Map<String, int> statuses = {};
 
+  /// By call: answer with this status and body instead.
+  final Map<String, (int, Object)> errors = {};
+
   http.Client get client => MockClient((req) async {
         final path = req.url.path.replaceFirst('/api/v1', '');
         final call = '${req.method} $path';
@@ -54,6 +57,8 @@ class _Server {
         if (_guarded.hasMatch(path) && guarded) {
           return _ok({'errorCode': 'APP_ATTEST_REQUIRED'}, 403);
         }
+        final error = errors[call];
+        if (error != null) return _ok(error.$2, error.$1);
         final status = statuses[call];
         if (status != null) return _ok({'message': 'refused'}, status);
         final answer = answers[call];
@@ -130,6 +135,111 @@ void main() {
       expect(s.calledGuarded, isFalse);
     });
 
+    test('a queued save says when it was made', () async {
+      final s = _Server()
+        ..answers['GET /books/1'] = epubBook
+        ..answers['PUT /reading-progress'] = {'results': []};
+      await _api(s).updateEbookProgress('1',
+          ebookLocation: 'epubcfi(/6/4)', ebookProgress: 0.5, editedAt: DateTime.utc(2026, 11, 8, 10));
+      final write = ((s.bodies.last as Map)['writes'] as List).single as Map;
+      expect(write['editedAt'], '2026-11-08T10:00:00.000Z');
+    });
+
+    test('a position the server kept as newer still clears the queue', () async {
+      final s = _Server()
+        ..answers['GET /books/1'] = epubBook
+        ..answers['PUT /reading-progress'] = {
+          'results': [
+            {'fileId': 39, 'status': 'superseded'},
+          ],
+        };
+      final api = _api(s);
+      final ok = await api.updateEbookProgress('1',
+          ebookLocation: 'epubcfi(/6/4)', ebookProgress: 0.5, editedAt: DateTime.utc(2026, 11, 8, 10));
+      expect(ok, isTrue);
+      expect(api.lastEbookProgressStatus, 200);
+    });
+
+    test('the older route is never sent the time, which it would refuse', () async {
+      final s = _Server(features: const ['other'], guarded: false)
+        ..answers['GET /books/1'] = epubBook
+        ..answers['POST /books/files/39/progress'] = const {};
+      await _api(s).updateEbookProgress('1',
+          ebookLocation: 'epubcfi(/6/4)', ebookProgress: 0.5, editedAt: DateTime.utc(2026, 11, 8, 10));
+      expect((s.bodies.last as Map).containsKey('editedAt'), isFalse);
+    });
+
+    group('a book merged into another', () {
+      const merged = (404, {
+        'message': 'Book was merged into another book',
+        'errorCode': 'BOOK_MERGED',
+        'errorMeta': {'targetBookId': 2},
+      });
+      const kept = {
+        'id': 2,
+        'title': 'Anathem',
+        'files': [
+          {'id': 39, 'format': 'epub', 'fileName': 'a.epub', 'role': 'content'},
+        ],
+      };
+
+      test('a queued save lands on the book it went into, not dropped', () async {
+        final s = _Server()
+          ..errors['GET /books/1'] = merged
+          ..answers['GET /books/2'] = kept
+          ..answers['PUT /reading-progress'] = {'results': []};
+        final api = _api(s);
+        final ok = await api.updateEbookProgress('1', ebookLocation: 'epubcfi(/6/4)', ebookProgress: 0.5);
+        expect(ok, isTrue, reason: s.calls.join('\n'));
+        expect(api.lastEbookProgressStatus, 200);
+        expect(((s.bodies.last as Map)['writes'] as List).single['fileId'], 39);
+      });
+
+      test('a finished book is marked on the book it went into', () async {
+        final s = _Server()
+          ..errors['GET /books/1'] = merged
+          ..answers['GET /books/2'] = kept
+          ..answers['PUT /reading-progress'] = {'results': []}
+          ..answers['PATCH /books/2/status'] = const {};
+        await _api(s).updateEbookProgress('1', ebookLocation: 'epubcfi(/6/4)', ebookProgress: 1.0);
+        expect(s.calls, contains('PATCH /books/2/status'));
+        expect(s.calls, isNot(contains('PATCH /books/1/status')));
+      });
+
+      test('the reader\'s position check reads the book it went into', () async {
+        final s = _Server()
+          ..errors['GET /books/1'] = merged
+          ..answers['GET /books/2'] = kept
+          ..answers['GET /books/2/progress'] = [
+            {'fileId': 39, 'cfi': 'epubcfi(/6/4)', 'percentage': 50},
+          ];
+        final position = await _api(s).getEbookPosition('1');
+        expect(position?['ebookLocation'], 'epubcfi(/6/4)', reason: s.calls.join('\n'));
+      });
+
+      test('a reset clears the book it went into', () async {
+        final s = _Server()
+          ..errors['GET /books/1'] = merged
+          ..answers['GET /books/2'] = {
+            ...kept,
+            'readStatus': {'status': 'reading'},
+          }
+          ..answers['GET /books/2/progress'] = [
+            {'fileId': 39},
+          ]
+          ..answers['PATCH /books/2/status'] = const {};
+        expect(await _api(s).resetProgress('1', 0), isTrue, reason: s.calls.join('\n'));
+        expect(s.calls, containsAll(['DELETE /audiobooks/2/playback-state', 'DELETE /reading-progress/39']));
+      });
+
+      test('a book truly gone is still a 404, so the queue can drop it', () async {
+        final s = _Server();
+        final api = _api(s);
+        expect(await api.updateEbookProgress('1', ebookLocation: 'epubcfi(/6/4)', ebookProgress: 0.5), isFalse);
+        expect(api.lastEbookProgressStatus, 404);
+      });
+    });
+
     test('a reset clears every file and marks the book unread', () async {
       final s = _Server()
         ..answers['GET /books/1/progress'] = [
@@ -179,6 +289,55 @@ void main() {
       expect(scope, isNotNull, reason: s.calls.join('\n'));
       expect(s.count('POST /smart-scopes/5/books/query'), greaterThan(1));
       expect((s.bodies.last as Map)['pagination'], containsPair('page', greaterThan(0)));
+    });
+  });
+
+  group('Libraries', () {
+    test('a new library sends nothing the server refuses', () async {
+      final s = _Server()..answers['POST /libraries'] = {'id': 3, 'name': 'Audio', 'folders': <Object>[]};
+      await _api(s).adminCreateLibrary(name: 'Audio', icon: 'book', folders: const ['/data'], organizationMode: 'book_per_file');
+      expect(s.calls, contains('POST /libraries'));
+      expect((s.bodies.last as Map).containsKey('type'), isFalse);
+    });
+  });
+
+  group('Watchlist', () {
+    test('a request that landed re-reads its author, without the removed route', () async {
+      Map<String, Object> work(List<String> owned) => {
+            'id': 'w1',
+            'title': 'Anathem',
+            'ownedFormats': owned,
+            'requestIds': {'audiobook': 77},
+            'requestStatuses': {'audiobook': 'importing'},
+          };
+      final s = _Server()
+        ..answers['GET /monitored/authors/a1'] = {
+          'author': {'id': 'a1', 'authorName': 'Neal Stephenson'},
+          'works': [work(const [])],
+        }
+        ..answers['GET /book-requests/77'] = {'status': 'available', 'matchedBookId': 5};
+      final api = _api(s);
+      // The author sheet's read puts the work in the cache.
+      await api.getAuthorById('watch-author-a1');
+      final reads = s.count('GET /monitored/authors/a1');
+      expect(reads, greaterThan(0), reason: s.calls.join('\n'));
+
+      final first = await api.watchlistRequestStatus(77);
+      expect(first?['refreshed'], isTrue, reason: s.calls.join('\n'));
+      expect(s.count('GET /monitored/authors/a1'), reads + 1);
+      expect(s.calls.where((c) => c.contains('by-book')), isEmpty);
+
+      // The sheet polls while it waits: that doesn't read the author each time.
+      final second = await api.watchlistRequestStatus(77);
+      expect(second?['refreshed'], isFalse);
+      expect(s.count('GET /monitored/authors/a1'), reads + 1);
+    });
+
+    test('a request not matched to a book yet reads no author', () async {
+      final s = _Server()..answers['GET /book-requests/88'] = {'status': 'available', 'matchedBookId': null};
+      final res = await _api(s).watchlistRequestStatus(88);
+      expect(res?['refreshed'], isFalse);
+      expect(s.calls.where((c) => c.startsWith('GET /monitored/authors')), isEmpty);
     });
   });
 
@@ -421,10 +580,31 @@ void main() {
         expect(listened(settled!), 20 * 600);
       });
 
-      test('the heaviest load stays well inside the rate limit', () async {
+      test('the heaviest load stays modest', () async {
         final s = history(30, format: 'epub', booksPerWeek: 6)..answers['GET /books/0/sessions'] = {'items': <Object>[]};
         await _api(s).getListeningStats();
         expect(s.calls.length, lessThan(90), reason: s.calls.join('\n'));
+      });
+
+      test('weeks kept before the double count fix are read again', () async {
+        final s = history(3);
+        SharedPreferences.setMockInitialValues({
+          'fork_stats_weeks': jsonEncode({
+            'zone': 'UTC@0',
+            'generation': 0,
+            'weeks': {
+              '2000-1': {
+                'l': {'2000-01-03': 99999},
+                'r': <String, num>{},
+                'b': <String, Object>{},
+                'g': 0,
+              },
+            },
+          }),
+        });
+        final stats = await _api(s).getListeningStats();
+        expect(listened(stats!), 3 * 600);
+        expect(timelineCalls(s), 3);
       });
 
       test('a refused week stops further reads, and the result is not held', () async {

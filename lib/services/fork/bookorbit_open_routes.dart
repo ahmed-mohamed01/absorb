@@ -8,6 +8,10 @@ part of '../api_service.dart';
 /// when a session changes) and `weeks`, each with the generation it was read in.
 const _forkStatsStoreKey = 'fork_stats_weeks';
 
+/// Part of the kept `zone`. Raise it when kept weeks were worked out wrongly, so
+/// they're read again: 2 stopped counting a session in both weeks it crosses.
+const _forkStatsStoreVersion = 2;
+
 extension ForkOpenRoutes on BookOrbitApiService {
   static const _statsWait = Duration(seconds: 45);
 
@@ -23,18 +27,31 @@ extension ForkOpenRoutes on BookOrbitApiService {
   }
 
   /// Saves one file's place. [body] is in the shape of the older route.
-  Future<void> _forkSaveFileProgress(String fileId, Map<String, dynamic> body) async {
+  /// [editedAt] is when a place saved late was made; the older route can't take it.
+  Future<void> _forkSaveFileProgress(String fileId, Map<String, dynamic> body, {DateTime? editedAt}) async {
     if (!await _forkHasReadingProgress()) {
       await _boPost('/books/files/$fileId/progress', body);
       return;
     }
     await _boPut('/reading-progress', {
-      'writes': [forkProgressWrite(int.parse(fileId), body)],
+      'writes': [forkProgressWrite(int.parse(fileId), body, editedAt: editedAt)],
     });
   }
 
   Future<void> _forkClearFileProgress(String fileId) async {
     await _boDelete(await _forkHasReadingProgress() ? '/reading-progress/$fileId' : '/books/files/$fileId/progress');
+  }
+
+  /// A read of a book that follows a merge: BookOrbit answers an id merged away
+  /// with a 404 naming the book it went into, and that book has its files.
+  Future<dynamic> _forkFollowMerge(String bookId, Future<dynamic> Function(String id) read) async {
+    try {
+      return await read(bookId);
+    } on _BoHttpError catch (e) {
+      final target = e.status == 404 ? forkMergedInto(e.body) : null;
+      if (target == null) rethrow;
+      return read(target);
+    }
   }
 
   /// One page of a Smart Scope's books. BookOrbit's GET route is a wrapper
@@ -178,7 +195,8 @@ extension ForkOpenRoutes on BookOrbitApiService {
   /// limit. Returns whether a read failed, so the result isn't kept for long.
   Future<({ForkWeeksMerged merged, bool failed})> _forkSplitDays(Iterable<String> days, Duration offset, String? zone) async {
     final store = await _forkReadStatsStore();
-    final sameZone = store['zone'] == '$zone@${offset.inMinutes}';
+    final storeZone = 'v$_forkStatsStoreVersion:$zone@${offset.inMinutes}';
+    final sameZone = store['zone'] == storeZone;
     final kept = sameZone ? (store['weeks'] as Map?)?.cast<String, dynamic>() ?? {} : <String, dynamic>{};
     final generation = (store['generation'] as num?)?.toInt() ?? 0;
 
@@ -187,11 +205,11 @@ extension ForkOpenRoutes on BookOrbitApiService {
     final fresh = <String, ForkWeekSplit>{};
     var failed = false;
     for (final week in forkWeeksToLoad(active, outdated, DateTime.now())) {
-      // One refusal is likely the rate limit: asking for more only adds to it.
+      // One refusal is likely an outage or a proxy's limit: asking for more only adds to it.
       if (failed) break;
       try {
         final read = await _forkWeekSessions(week);
-        final split = ForkWeekSplit.fromSessions(read.sessions, offset);
+        final split = ForkWeekSplit.fromSessions(read.sessions, offset, week);
         fresh[forkWeekKey(week)] = split;
         if (read.complete) {
           kept[forkWeekKey(week)] = {...split.toJson(), 'g': generation};
@@ -208,7 +226,7 @@ extension ForkOpenRoutes on BookOrbitApiService {
     final latest = ((await _forkReadStatsStore())['generation'] as num?)?.toInt() ?? generation;
     await ScopedPrefs.setString(
       _forkStatsStoreKey,
-      jsonEncode({'zone': '$zone@${offset.inMinutes}', 'generation': latest, 'weeks': kept}),
+      jsonEncode({'zone': storeZone, 'generation': latest, 'weeks': kept}),
     );
     final merged = forkMergeWeeks([
       for (final week in active)

@@ -27,6 +27,12 @@ void main() {
       expect(write.containsKey('text'), isFalse);
     });
 
+    test('says when a late save was made, in UTC, and only then', () {
+      final at = DateTime.utc(2026, 11, 8, 10);
+      expect(forkProgressWrite(1, {'percentage': 5}, editedAt: at)['editedAt'], '2026-11-08T10:00:00.000Z');
+      expect(forkProgressWrite(1, {'percentage': 5}).containsKey('editedAt'), isFalse);
+    });
+
     test('sends a page number as text', () {
       expect(forkProgressWrite(1, {'percentage': 5, 'pageNumber': 12})['text'], {'page': 12});
     });
@@ -56,6 +62,14 @@ void main() {
 
   const tokyo = Duration(hours: 9);
   const hawaii = Duration(hours: -10);
+
+  test('forkMergedInto reads where a merged book went, and nothing else', () {
+    expect(
+        forkMergedInto('{"errorCode":"BOOK_MERGED","errorMeta":{"targetBookId":2}}'), '2');
+    expect(forkMergedInto('{"message":"Book 1 not found"}'), isNull);
+    expect(forkMergedInto('{"errorCode":"OTHER","errorMeta":{"targetBookId":2}}'), isNull);
+    expect(forkMergedInto('not json'), isNull);
+  });
 
   test('forkFolderName is the last part of the path, or the fallback at a root', () {
     expect(forkFolderName('/data/books/audio/', 'Lib'), 'audio');
@@ -135,10 +149,28 @@ void main() {
         'sessionType': ?kind,
       };
 
+  const week45 = (year: 2026, week: 45);
+  const week46 = (year: 2026, week: 46);
+
   group('ForkWeekSplit', () {
+    test('a session crossing into the next week counts once, in the week it started', () {
+      // Sunday 23:30 to Monday 00:30 UTC: the server returns it for both weeks.
+      final crossing = {
+        ...session(1, 'm4b', seconds: 3600),
+        'startedAt': DateTime.utc(2026, 11, 8, 23, 30).toIso8601String(),
+        'endedAt': DateTime.utc(2026, 11, 9, 0, 30).toIso8601String(),
+      };
+      final merged = forkMergeWeeks([
+        ForkWeekSplit.fromSessions([crossing], Duration.zero, week45),
+        ForkWeekSplit.fromSessions([crossing], Duration.zero, week46),
+      ]);
+      expect(merged.listen, {'2026-11-08': 1800, '2026-11-09': 1800});
+      expect((merged.items['10'] as Map)['timeListening'], 3600);
+    });
+
     test('splits by format and counts a repeated session once', () {
       final split = ForkWeekSplit.fromSessions(
-          [session(1, 'm4b'), session(1, 'm4b'), session(2, 'epub', seconds: 300)], Duration.zero);
+          [session(1, 'm4b'), session(1, 'm4b'), session(2, 'epub', seconds: 300)], Duration.zero, week45);
       expect(split.listen, {'2026-11-08': 600});
       expect(split.read, {'2026-11-08': 300});
       expect(split.books['10'], {'t': 'Book 1', 's': 600});
@@ -146,13 +178,13 @@ void main() {
 
     test('read along on an EPUB is listening once its kind is known', () {
       final split = ForkWeekSplit.fromSessions(
-          [session(1, 'epub', kind: 'listen'), session(2, 'epub', kind: 'read', seconds: 300)], Duration.zero);
+          [session(1, 'epub', kind: 'listen'), session(2, 'epub', kind: 'read', seconds: 300)], Duration.zero, week45);
       expect(split.listen, {'2026-11-08': 600});
       expect(split.read, {'2026-11-08': 300});
     });
 
     test('survives being stored', () {
-      final split = ForkWeekSplit.fromSessions([session(1, 'm4b')], Duration.zero);
+      final split = ForkWeekSplit.fromSessions([session(1, 'm4b')], Duration.zero, week45);
       final back = ForkWeekSplit.fromJson(jsonDecode(jsonEncode(split.toJson())) as Map<String, dynamic>);
       expect(back.listen, split.listen);
       expect(back.books, split.books);
@@ -161,8 +193,8 @@ void main() {
 
   test('forkMergeWeeks adds weeks up, in the Stats screen item shape', () {
     final merged = forkMergeWeeks([
-      ForkWeekSplit.fromSessions([session(1, 'm4b')], Duration.zero),
-      ForkWeekSplit.fromSessions([session(1, 'm4b', hour: 11, seconds: 400)..['sessionId'] = 9], Duration.zero),
+      ForkWeekSplit.fromSessions([session(1, 'm4b')], Duration.zero, week45),
+      ForkWeekSplit.fromSessions([session(1, 'm4b', hour: 11, seconds: 400)..['sessionId'] = 9], Duration.zero, week45),
     ]);
     expect(merged.listen, {'2026-11-08': 1000});
     expect((merged.items['10'] as Map)['timeListening'], 1000);

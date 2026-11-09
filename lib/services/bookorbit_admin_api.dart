@@ -136,7 +136,6 @@ extension BookOrbitAdminApi on BookOrbitApiService {
           'name': name.trim(),
           'icon': icon,
           'folders': folders,
-          'type': 'books',
           'organizationMode': organizationMode,
           'coverAspectRatio': coverAspectRatio,
           'watch': watch,

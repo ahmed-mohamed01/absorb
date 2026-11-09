@@ -2850,6 +2850,7 @@ class ApiService {
     String itemId, {
     required String ebookLocation,
     required double ebookProgress,
+    DateTime? editedAt, // Fork: BookOrbit only, when a queued place was made.
   }) async {
     lastEbookProgressStatus = null;
     try {
