@@ -203,10 +203,20 @@ class ForkDashboardCovers {
   /// The width of a Continue card: the tile and the padding around its cover.
   double get heroCardWidth => tileWidth + 20;
 
-  /// The height of a row of Continue cards: the slot, the padding above and
-  /// below the cover, and the 106 px card text upstream's square row leaves.
-  double get heroRowHeight => coverHeight + 14 + 106;
+  /// The height of a row of Continue cards, whose progress is on the cover:
+  /// the slot, the padding above and below the cover, and the text under it
+  /// in [forkHeroTextPadding] (a one-line title in bodySmall at line height
+  /// 1.2, a 2 px gap and the author in labelSmall at its 16 px line, both at
+  /// the phone's font size [textScaler]). The card is then 10 px from its
+  /// edge to the cover and to the text all round.
+  double heroRowHeight(TextScaler textScaler) =>
+      coverHeight + 14 + forkHeroTextPadding.vertical
+      + textScaler.scale(12) * 1.2 + 2 + textScaler.scale(11) * 16 / 11;
 }
+
+/// The padding of a Continue card's text on the Dashboard: 10 px from the
+/// card's edges, as the cover is, and 10 px under the cover with its own 4.
+const EdgeInsets forkHeroTextPadding = EdgeInsets.fromLTRB(10, 6, 10, 10);
 
 /// [cover] centred in a [slot]-shaped space as tall as it is, or [cover]
 /// alone when there is no slot.

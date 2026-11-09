@@ -412,7 +412,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           child: SizedBox(
             // Taller row when 2:3 covers are on; the card's
             // cover alone is ~225 with rectangle covers.
-            height: covers?.heroRowHeight ?? (_rectangleCovers ? 320 : 250),
+            height: covers?.heroRowHeight(MediaQuery.textScalerOf(context)) ?? (_rectangleCovers ? 320 : 250),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -1219,6 +1219,8 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
                       bottom: 0,
                       child: CoverStateBadges(isDownloaded: true, isFinished: false),
                     ),
+                  if (covers != null && progressValue > 0) forkCoverProgressBar(progressValue, rowAccent), // Fork: on the cover
+                  if (covers != null) forkCoverProgressLabel(remaining > 0 ? _fmtRemaining(remaining) : '${(progressValue * 100).round()}%'), // Fork
                   if (isCurrentItem && player.isPlaying)
                     Positioned(
                       right: 6, bottom: 6,
@@ -1253,7 +1255,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
               // Text + progress area
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                  padding: covers == null ? const EdgeInsets.fromLTRB(12, 8, 12, 10) : forkHeroTextPadding, // Fork: 10 all round on the Dashboard
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1261,8 +1263,8 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
                       // stays in a consistent position whether the title
                       // wraps or not.
                       SizedBox(
-                        height: 30,
-                        child: Text(title, maxLines: 2,
+                        height: covers == null ? 30 : null, // Fork: one line on the Dashboard, as the other shelves have
+                        child: Text(title, maxLines: covers == null ? 2 : 1,
                             overflow: TextOverflow.ellipsis,
                             style: tt.bodySmall?.copyWith(
                                 fontWeight: FontWeight.w600,
@@ -1275,6 +1277,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
                             style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
                       ],
                       const Spacer(),
+                      if (covers == null) // Fork: on the Dashboard the bar sits on the cover
                       ClipRRect(
                         borderRadius: BorderRadius.circular(2),
                         child: LinearProgressIndicator(
@@ -1284,7 +1287,8 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
                           valueColor: AlwaysStoppedAnimation(rowAccent),
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      if (covers == null) const SizedBox(height: 4), // Fork
+                      if (covers == null) // Fork: on the Dashboard it is on the cover
                       Row(children: [
                         Text('${(progressValue * 100).round()}%',
                             style: tt.labelSmall?.copyWith(

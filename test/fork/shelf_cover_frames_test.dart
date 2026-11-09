@@ -256,7 +256,9 @@ void main() {
       expect(covers.slot, 1.0);
       expect(covers.coverHeight, covers.tileWidth);
       expect(covers.heroCardWidth, covers.tileWidth + 20);
-      expect(covers.heroRowHeight, covers.tileWidth + 120);
+      expect(covers.heroRowHeight(TextScaler.noScaling), closeTo(covers.coverHeight + 32 + 12 * 1.2 + 16, 0.001));
+      expect(covers.heroRowHeight(const TextScaler.linear(2)) - covers.heroRowHeight(TextScaler.noScaling),
+          closeTo(12 * 1.2 + 16, 0.001));
     });
 
     testWidgets('with a slot a list cover is the row\'s full height, centred, and titles line up', (tester) async {

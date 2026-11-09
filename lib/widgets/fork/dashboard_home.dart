@@ -72,3 +72,37 @@ class ForkDashboardFooter extends StatelessWidget {
     iconColor: theme.colorScheme.primary,
   );
 }
+
+/// A Continue card's progress on the Dashboard: a bar along the bottom edge
+/// of the cover in [color], as on BookOrbit's covers and the other shelves'
+/// cards, in place of the bar under the title. Sits in the cover's `Stack`.
+Widget forkCoverProgressBar(double value, Color color) => Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: LinearProgressIndicator(
+        value: value.clamp(0.0, 1.0),
+        minHeight: 4,
+        backgroundColor: Colors.black38,
+        valueColor: AlwaysStoppedAnimation(color),
+      ),
+    );
+
+/// A Continue card's time left (or reading percent) on the Dashboard, a
+/// small label in the cover's top-right corner, in place of the line under
+/// the author. Sits in the cover's `Stack`.
+Widget forkCoverProgressLabel(String text) => Positioned(
+      top: 6,
+      right: 6,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.65),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(text,
+            maxLines: 1,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+      ),
+    );
