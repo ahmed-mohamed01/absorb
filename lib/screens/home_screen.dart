@@ -25,6 +25,7 @@ import '../widgets/library_picker_sheet.dart';
 import '../widgets/fork/library_icon.dart';
 import '../widgets/fork/dashboard_home.dart';
 import '../widgets/fork/dashboard_widgets.dart';
+import '../widgets/fork/shelf_cover_frames.dart';
 import '../widgets/shimmer.dart';
 import '../widgets/book_detail_sheet.dart';
 import '../widgets/card_buttons.dart';
@@ -356,6 +357,8 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final heading = forkShelfHeading(context, dashboard: lib.homeDashboard); // Fork: bigger on the Dashboard
+    // Fork: on the Dashboard the cards' covers are the Library grid's.
+    final covers = lib.homeDashboard ? ForkDashboardCovers.of(context, items, _rectangleCovers ? forkPortraitFrame : 1.0) : null;
     return <Widget>[
       SliverToBoxAdapter(
         child: GestureDetector(
@@ -365,6 +368,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
             icon: icon,
             entities: items,
             coverAspectRatio: _rectangleCovers ? 2 / 3 : 1.0,
+            showSubtitles: _showSubtitles, // Fork
           ),
           behavior: HitTestBehavior.opaque,
           child: Padding(
@@ -408,7 +412,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
           child: SizedBox(
             // Taller row when 2:3 covers are on; the card's
             // cover alone is ~225 with rectangle covers.
-            height: _rectangleCovers || (lib.homeDashboard && items.any((e) => forkBookFrame(e) != null)) ? 320 : 250,
+            height: covers?.heroRowHeight ?? (_rectangleCovers ? 320 : 250),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -420,6 +424,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                 return RepaintBoundary(child: _ContinueListeningCard(
                   item: item, lib: lib, player: _player,
                   rectangleCovers: _rectangleCovers,
+                  covers: covers,
                   reading: reading,
                   tapOpensDetails: _cardsOpenDetails,
                   selectionMode: selectionAvailable && _selectionMode,
@@ -833,6 +838,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                         icon: sectionIcon,
                         entities: entities,
                         coverAspectRatio: _rectangleCovers ? 2 / 3 : 1.0,
+                        showSubtitles: _showSubtitles, // Fork
                       );
                     } else {
                       sectionIcon = _sectionIcons[id] ?? forkSectionIcon(id) ?? Icons.album_outlined;
@@ -846,6 +852,7 @@ class HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMi
                           icon: sectionIcon,
                           entities: entities,
                           coverAspectRatio: _rectangleCovers ? 2 / 3 : 1.0,
+                          showSubtitles: _showSubtitles, // Fork
                         );
                       }
                     }
@@ -898,6 +905,7 @@ class _ContinueListeningCard extends StatefulWidget {
   final LibraryProvider lib;
   final AudioPlayerService player;
   final bool rectangleCovers;
+  final ForkDashboardCovers? covers; // Fork: the Dashboard's Library-grid covers
   // A Continue Reading card: reading progress, and opens the reader.
   final bool reading;
   final bool tapOpensDetails;
@@ -910,6 +918,7 @@ class _ContinueListeningCard extends StatefulWidget {
     required this.lib,
     required this.player,
     required this.rectangleCovers,
+    this.covers,
     this.reading = false,
     this.tapOpensDetails = false,
     this.selectionMode = false,
@@ -933,7 +942,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
   }
 
   double? get _bookFrame {
-    if (!widget.lib.homeDashboard) return null;
+    if (widget.covers?.frames.ownFrames != true) return null;
     return forkBookFrame(widget.item);
   }
 
@@ -1041,8 +1050,8 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
         ? (metadata['title'] as String? ?? '')
         : (metadata['authorName'] as String? ?? '');
 
-    final frame = _bookFrame;
-    final coverUrl = lib.getCoverUrl(itemId, coverRatio: frame);
+    final covers = widget.covers;
+    final coverUrl = lib.getCoverUrl(itemId, coverRatio: covers?.frames.of(item));
     _deriveScheme(coverUrl);
 
     final episodeId = recentEpisode?['id'] as String?;
@@ -1176,14 +1185,14 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
           onLongPress: widget.selectionMode ? null : openQuickActions,
           borderRadius: BorderRadius.circular(14),
           child: SizedBox(
-            width: frame != null ? 130 / (2 / 3) * frame + 20 : 150,
+            width: covers?.heroCardWidth ?? 150,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Floating cover with a colored glow
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
-                child: DecoratedBox(
+                child: forkCoverInSlot(covers?.slot, DecoratedBox( // Fork
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(10),
                     boxShadow: [
@@ -1198,7 +1207,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: AspectRatio(
-                      aspectRatio: frame ?? (widget.rectangleCovers ? 2 / 3 : 1),
+                      aspectRatio: covers?.frames.of(item) ?? (widget.rectangleCovers ? 2 / 3 : 1),
                       child: Stack(children: [
                   Positioned.fill(
                     child: _buildCoverImage(coverUrl, cs, lib.mediaHeaders),
@@ -1239,7 +1248,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
                       ]),
                     ),
                   ),
-                ),
+                )),
               ),
               // Text + progress area
               Expanded(

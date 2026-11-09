@@ -48,6 +48,7 @@ import 'server_notifications_screen.dart';
 import '../services/bookorbit_notification_socket.dart';
 import '../services/server_notifications.dart';
 import '../services/ebook_cache.dart';
+import '../widgets/books_sheet_shared.dart' show CoverGridScope;
 import '../widgets/action_pill.dart';
 import '../widgets/book_detail_sheet.dart' show showBookDetailSheet;
 import '../widgets/ebook_router.dart';
@@ -337,7 +338,7 @@ class _AppShellState extends State<AppShell>
     if (_pages[index] != null) return;
     switch (index) {
       case 0:
-        _pages[index] = HomeScreen(key: _homeKey);
+        _pages[index] = CoverGridScope(child: HomeScreen(key: _homeKey)); // Fork: beside a rail, covers size as the Library's do
         break;
       case 1:
         _pages[index] = LibraryScreen(key: _libraryKey);

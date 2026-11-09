@@ -52,7 +52,7 @@ class _ForkSettingsScreenState extends State<ForkSettingsScreen> {
           title: const Text("Each book's own cover shape"),
           subtitle: Text(
             ForkSettings.ownCoverShapes
-                ? 'Ebooks are portrait and audiobooks square in the Library grid and author and narrator pages'
+                ? 'Ebooks are portrait and audiobooks square in the Library grid, Dashboard and author and narrator pages'
                 : 'Every cover follows the library\'s cover shape',
             style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
           value: ForkSettings.ownCoverShapes,

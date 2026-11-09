@@ -11,6 +11,7 @@ import 'series_card.dart';
 import 'episode_list_sheet.dart';
 import 'books_sheet_shared.dart' show coverSizeScale;
 import 'fork/dashboard_home.dart';
+import 'fork/shelf_cover_frames.dart';
 
 class HomeSection extends StatelessWidget {
   final String title;
@@ -69,28 +70,28 @@ class HomeSection extends StatelessWidget {
             e is Map<String, dynamic> && e['recentEpisode'] != null);
     final effectiveEpisode = isEpisodeSection || onlyEpisodeEntities;
 
-    // BookOrbit says each book's own cover frame, so a shelf can hold square
-    // audiobooks next to portrait epubs. Covers share one height and the
-    // square ones come out wider.
-    double? frameOf(dynamic e) => forkBookFrame(e);
-    final bool mixedShapes = context.read<LibraryProvider>().homeDashboard &&
-        !isContinueListening &&
-        !isSeriesSection &&
-        !isAuthorSection &&
-        !isEpisodeSection &&
-        entities.any((e) => frameOf(e) != null);
-    final bool isRectCover = coverAspectRatio < 1.0 || mixedShapes;
     // Book and series covers follow the cover size setting like the library
     // grid does; the wide continue card, authors and episodes keep their size.
     final bool coverCard =
         !isContinueListening && !effectiveEpisode && !isAuthorSection;
+    // Fork: a Dashboard shelf's covers are the Library grid's, tile for tile.
+    final ForkDashboardCovers? covers =
+        context.read<LibraryProvider>().homeDashboard && coverCard
+            ? ForkDashboardCovers.of(context, entities, coverAspectRatio)
+            : null;
+    // A Library tile's title takes one line. A series card or a stray episode
+    // keeps the room it had.
+    final bool isRectCover = coverAspectRatio < 1.0 ||
+        (covers != null && !isSeriesSection && !_hasEpisode(entities));
     final double cardWidth = isContinueListening
         ? 300
         : isAuthorSection
             ? 120
-            : coverCard
-                ? 140 * coverSizeScale()
-                : 140;
+            : covers != null
+                ? covers.tileWidth
+                : coverCard
+                    ? 140 * coverSizeScale()
+                    : 140;
     // Book cards grow by a line when subtitles are on; author and episode
     // cards have no subtitle to show, so they stay as they are.
     final bool subtitleLine =
@@ -102,7 +103,7 @@ class HomeSection extends StatelessWidget {
     double lineHeight(TextStyle? style) =>
         scaler.scale((style?.fontSize ?? 12) * (style?.height ?? 1.4));
     final double textBlock = 6 +
-        lineHeight(tt.labelMedium) * (isRectCover && !mixedShapes ? 1 : 2) +
+        lineHeight(tt.labelMedium) * (isRectCover ? 1 : 2) +
         lineHeight(tt.labelSmall) * (subtitleLine ? 2 : 1) +
         6;
     final double cardHeight = isContinueListening
@@ -111,9 +112,7 @@ class HomeSection extends StatelessWidget {
             ? 200
             : isAuthorSection
                 ? 170
-                : mixedShapes
-                    ? cardWidth / forkPortraitFrame + textBlock
-                    : cardWidth / coverAspectRatio + textBlock;
+                : (covers?.coverHeight ?? cardWidth / coverAspectRatio) + textBlock;
 
     final heading = forkShelfHeading(context, dashboard: context.read<LibraryProvider>().homeDashboard); // Fork: bigger on the Dashboard
     return Padding(
@@ -167,7 +166,6 @@ class HomeSection extends StatelessWidget {
           SizedBox(
             height: cardHeight,
             child: _SnapScrollList(
-              snap: !mixedShapes,
               cardWidth: cardWidth,
               itemCount: entities.length,
               itemBuilder: (context, index) {
@@ -198,7 +196,7 @@ class HomeSection extends StatelessWidget {
                 if (isSeriesSection) {
                   return SizedBox(
                     width: cardWidth,
-                    child: SeriesCard(series: entity, coverAspectRatio: coverAspectRatio),
+                    child: SeriesCard(series: entity, coverAspectRatio: covers?.slot ?? coverAspectRatio),
                   );
                 }
 
@@ -226,15 +224,16 @@ class HomeSection extends StatelessWidget {
                   );
                 }
 
-                final itemRatio = mixedShapes ? (frameOf(entity) ?? forkPortraitFrame) : coverAspectRatio;
+                final itemRatio = covers?.frames.of(entity) ?? coverAspectRatio;
                 return SizedBox(
-                  width: mixedShapes ? cardWidth / forkPortraitFrame * itemRatio : cardWidth,
+                  width: cardWidth,
                   child: BookCard(
                     item: entity,
                     showProgress: isContinueListening,
                     showSubtitle: subtitleLine,
                     isWide: isContinueListening,
                     coverAspectRatio: isContinueListening ? 1.0 : itemRatio,
+                    coverSlot: covers?.slot,
                     sourcePlaylistId: sourcePlaylistId,
                     sourcePlaylistEpisodeId: sourcePlaylistEpisodeId,
                     sourceCollectionId: sourceCollectionId,
@@ -258,6 +257,10 @@ class HomeSection extends StatelessWidget {
     );
   }
 
+  // Fork: whether a shelf holds an episode, itself or as a playlist entry.
+  static bool _hasEpisode(List<dynamic> entities) => entities.any((e) =>
+      e is Map && (e['recentEpisode'] != null || e['episodeId'] != null));
+
   String? _sourceIdFromSectionId(String type) {
     final prefix = '$type:';
     if (!sectionId.startsWith(prefix)) return null;
@@ -276,12 +279,10 @@ class HomeSection extends StatelessWidget {
 /// A horizontal scrolling list with smooth snap-to-card behavior.
 class _SnapScrollList extends StatefulWidget {
   final double cardWidth;
-  final bool snap;
   final int itemCount;
   final Widget Function(BuildContext, int) itemBuilder;
 
   const _SnapScrollList({
-    this.snap = true,
     required this.cardWidth,
     required this.itemCount,
     required this.itemBuilder,
@@ -312,7 +313,6 @@ class _SnapScrollListState extends State<_SnapScrollList> {
 
     return NotificationListener<ScrollEndNotification>(
       onNotification: (notification) {
-        if (!widget.snap) return false;
         final maxExtent = _controller.position.maxScrollExtent;
         final offset = _controller.offset;
         double targetOffset;

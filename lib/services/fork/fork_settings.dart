@@ -10,10 +10,10 @@ class ForkSettings {
   static const _ownCoverShapesKey = 'forkOwnCoverShapes';
   static const _singleBookSeriesKey = 'forkSingleBookSeriesAsBooks';
 
-  /// Whether the Library grid and the author and narrator sheets draw each
-  /// BookOrbit book in its own cover shape (portrait ebooks, square
-  /// audiobooks) rather than all in the library's cover shape. The series
-  /// and Dashboard shelf sheets always do.
+  /// Whether the Library grid, the Dashboard's shelves and their sheets and
+  /// the author and narrator sheets draw each BookOrbit book in its own cover
+  /// shape (portrait ebooks, square audiobooks) rather than all in the
+  /// library's cover shape. The series sheet always does.
   static bool ownCoverShapes = true;
 
   /// Whether, with Collapse series on, a series holding one book shows as

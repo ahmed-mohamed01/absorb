@@ -217,6 +217,75 @@ void main() {
       expect(cover.center.dx, closeTo(slot.center.dx, 0.001));
     });
 
+    test('a cell is the Library grid\'s: tall only when every cover is portrait', () {
+      expect(forkGridCellRatio(forkGridFrames([_book(1), _book(2 / 3)], 1.0)), 0.68);
+      expect(forkGridCellRatio(forkGridFrames([_book(1), _book(1)], forkPortraitFrame)), 0.68);
+      expect(forkGridCellRatio(forkGridFrames([_book(2 / 3), _book(2 / 3)], 1.0)), 0.48);
+    });
+
+    test('a Dashboard shelf of nothing but ebooks has the audiobook shelf\'s square slot', () {
+      expect(forkDashboardSlot(forkGridFrames([_book(2 / 3), _book(2 / 3)], 1.0)), 1.0);
+      expect(forkDashboardSlot(forkGridFrames([_book(1), _book(1)], 1.0)), 1.0);
+      expect(forkDashboardSlot(forkGridFrames([_book(1), _book(2 / 3)], forkPortraitFrame)), 1.0);
+    });
+
+    test('with the switch off a Dashboard shelf takes the cover setting', () {
+      ForkSettings.ownCoverShapes = false;
+      expect(forkDashboardSlot(forkGridFrames([_book(1)], forkPortraitFrame)), forkPortraitFrame);
+      expect(forkDashboardSlot(forkGridFrames([_book(2 / 3)], 1.0)), 1.0);
+    });
+
+    test('off the Dashboard a sheet takes the cover setting, and on it the switch decides', () {
+      final book = _book(2 / 3);
+      expect(forkSheetFrames([book], 1.0, dashboard: false).of(book), 1.0);
+      expect(forkSheetFrames([book], 1.0, dashboard: true).of(book), forkPortraitFrame);
+      ForkSettings.ownCoverShapes = false;
+      expect(forkSheetFrames([book], 1.0, dashboard: true).of(book), 1.0);
+    });
+
+    testWidgets('Dashboard covers read a playlist entry\'s nested book and size from the tile', (tester) async {
+      late ForkDashboardCovers covers;
+      await tester.pumpWidget(MediaQuery(
+        data: const MediaQueryData(size: Size(400, 800)),
+        child: Builder(builder: (context) {
+          covers = ForkDashboardCovers.of(context, [{'libraryItem': _book(2 / 3)}, _book(1)], 1.0);
+          return const SizedBox();
+        }),
+      ));
+      expect(covers.frames.mixed, isTrue);
+      expect(covers.slot, 1.0);
+      expect(covers.coverHeight, covers.tileWidth);
+      expect(covers.heroCardWidth, covers.tileWidth + 20);
+      expect(covers.heroRowHeight, covers.tileWidth + 120);
+    });
+
+    testWidgets('with a slot a list cover is the row\'s full height, centred, and titles line up', (tester) async {
+      final books = [_book(2 / 3), _book(1)];
+      final frames = ForkShelfFrames(books, 1.0, ownFrames: true);
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Column(children: [
+            for (var i = 0; i < books.length; i++)
+              SizedBox(
+                height: 112,
+                child: Row(children: [
+                  ForkShelfCover(frames: frames, item: books[i], slot: 1.0, child: ColoredBox(key: ValueKey('c$i'), color: Colors.grey)),
+                  Expanded(child: Text('Title', key: ValueKey('t$i'))),
+                ]),
+              ),
+          ]),
+        ),
+      ));
+      final portrait = tester.getRect(find.byKey(const ValueKey('c0')));
+      final square = tester.getRect(find.byKey(const ValueKey('c1')));
+      expect(portrait.height, 112);
+      expect(square.height, 112);
+      expect(portrait.width, closeTo(112 * 2 / 3, 0.01));
+      expect(portrait.center.dx, closeTo(square.center.dx, 0.01));
+      expect(tester.getTopLeft(find.byKey(const ValueKey('t0'))).dx,
+          tester.getTopLeft(find.byKey(const ValueKey('t1'))).dx);
+    });
+
     test('no slot leaves the cover as it is', () {
       const cover = SizedBox(key: Key('cover'));
       expect(forkCoverInSlot(null, cover), same(cover));

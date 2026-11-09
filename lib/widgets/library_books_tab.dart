@@ -217,12 +217,12 @@ class LibraryBooksTab extends StatelessWidget {
             sliver: SliverGrid(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: cols,
-                childAspectRatio: forkGridTall(frames) ? 0.48 : 0.68, // Fork: portrait cells only when every cover is
+                childAspectRatio: forkGridCellRatio(frames), // Fork: portrait cells only when every cover is
                 // Subtitles add a line under every title, and how much room
                 // that needs depends on the cover size, so size the cell from
                 // the tile itself rather than from a second fixed ratio.
                 mainAxisExtent: showSubtitles
-                    ? coverGridTileWidth(context) / (forkGridTall(frames) ? 0.48 : 0.68)
+                    ? coverGridTileWidth(context) / forkGridCellRatio(frames)
                         + coverGridSubtitleHeight(context)
                     : null,
                 crossAxisSpacing: 10,

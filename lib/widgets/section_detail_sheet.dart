@@ -14,6 +14,7 @@ import 'episode_detail_sheet.dart';
 import 'absorb_placement.dart';
 import 'swipe_action.dart';
 import 'stackable_sheet.dart';
+import 'fork/dashboard_shelf_grid.dart';
 import 'fork/shelf_cover_frames.dart';
 import 'fork/shelf_sheet_frame.dart';
 
@@ -39,6 +40,7 @@ class SectionDetailSheet extends StatefulWidget {
   final IconData icon;
   final List<dynamic> entities;
   final double coverAspectRatio;
+  final bool showSubtitles; // Fork: the Dashboard grid's tiles show them as the Library's do
   final ScrollController? scrollController;
 
   const SectionDetailSheet({
@@ -47,6 +49,7 @@ class SectionDetailSheet extends StatefulWidget {
     required this.icon,
     required this.entities,
     this.coverAspectRatio = 1.0,
+    this.showSubtitles = false, // Fork
     this.scrollController,
   });
 
@@ -55,6 +58,7 @@ class SectionDetailSheet extends StatefulWidget {
     required IconData icon,
     required List<dynamic> entities,
     double coverAspectRatio = 1.0,
+    bool showSubtitles = false, // Fork
   }) {
     showStackableSheet(
       context: context,
@@ -66,6 +70,7 @@ class SectionDetailSheet extends StatefulWidget {
         icon: icon,
         entities: entities,
         coverAspectRatio: coverAspectRatio,
+        showSubtitles: showSubtitles, // Fork
         scrollController: scrollController,
       )),
     );
@@ -132,7 +137,7 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
   }
 
   Widget _buildList(ColorScheme cs, TextTheme tt, LibraryProvider lib, AppLocalizations l) {
-    final frames = ForkShelfFrames(widget.entities, widget.coverAspectRatio, ownFrames: lib.homeDashboard); // Fork: each book's own shape
+    final frames = forkSheetFrames(widget.entities, widget.coverAspectRatio, dashboard: lib.homeDashboard); // Fork: each book's own shape
     return ListView.builder(
       controller: widget.scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4)
@@ -182,7 +187,7 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
                 height: 112,
                 child: Row(children: [
                   ForkShelfCover( // Fork: each book's own shape
-                    frames: frames, item: item,
+                    frames: frames, item: item, slot: lib.homeDashboard ? forkDashboardSlot(frames) : null,
                     child: Stack(children: [
                       Positioned.fill(child: _cover(coverUrl, lib, cs)),
                       if (isExplicit) _explicitBadge(l),
@@ -244,7 +249,11 @@ class _SectionDetailSheetState extends State<SectionDetailSheet> {
   }
 
   Widget _buildGrid(ColorScheme cs, TextTheme tt, LibraryProvider lib, AppLocalizations l) {
-    final frames = ForkShelfFrames(widget.entities, widget.coverAspectRatio, ownFrames: lib.homeDashboard); // Fork: each book's own shape
+    if (lib.homeDashboard && ForkDashboardShelfGrid.canShow(widget.entities)) { // Fork: the Library grid's layout
+      return ForkDashboardShelfGrid(entities: widget.entities, coverAspectRatio: widget.coverAspectRatio,
+          showSubtitles: widget.showSubtitles, scrollController: widget.scrollController);
+    }
+    final frames = forkSheetFrames(widget.entities, widget.coverAspectRatio, dashboard: lib.homeDashboard); // Fork: each book's own shape
     final isRect = frames.hasPortrait; // Fork: from the books' shapes
     // Text area is ~50px; cover uses aspect ratio to determine height
     final childAspectRatio = isRect ? 0.45 : 0.62;

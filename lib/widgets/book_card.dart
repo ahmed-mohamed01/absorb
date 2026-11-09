@@ -14,6 +14,7 @@ import 'book_detail_sheet.dart';
 import 'episode_list_sheet.dart';
 import 'fork/watchlist_cover_badges.dart';
 import '../services/fork/watchlist_info.dart';
+import 'fork/shelf_cover_frames.dart';
 
 class BookCard extends StatelessWidget {
   final Map<String, dynamic> item;
@@ -21,6 +22,7 @@ class BookCard extends StatelessWidget {
   final bool showSubtitle;
   final bool isWide;
   final double coverAspectRatio;
+  final double? coverSlot; // Fork: the cover's slot on a Dashboard shelf, as the Library grid has
   final String? sourcePlaylistId;
   final String? sourcePlaylistEpisodeId;
   final String? sourceCollectionId;
@@ -36,6 +38,7 @@ class BookCard extends StatelessWidget {
     this.showSubtitle = false,
     this.isWide = false,
     this.coverAspectRatio = 1.0,
+    this.coverSlot, // Fork
     this.sourcePlaylistId,
     this.sourcePlaylistEpisodeId,
     this.sourceCollectionId,
@@ -339,7 +342,7 @@ class BookCard extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         // Cover
-        AspectRatio(
+        forkCoverInSlot(coverSlot, AspectRatio( // Fork
           aspectRatio: coverAspectRatio,
           child: _PressableCard(
             onTap: () => _navigateToDetail(context),
@@ -425,14 +428,14 @@ class BookCard extends StatelessWidget {
               ),
             ),
           ),
-        ),
+        )),
         const SizedBox(height: 6),
         // Title
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2),
           child: Text(
             title,
-            maxLines: coverAspectRatio < 1.0 ? 1 : 2,
+            maxLines: coverAspectRatio < 1.0 || coverSlot != null ? 1 : 2, // Fork: one line beside the Library grid's slots
             overflow: TextOverflow.ellipsis,
             style: tt.labelMedium?.copyWith(
               fontWeight: FontWeight.w500,

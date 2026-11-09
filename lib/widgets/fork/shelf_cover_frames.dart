@@ -2,12 +2,13 @@ import 'package:flutter/widgets.dart';
 
 import '../../services/fork/cover_frame.dart';
 import '../../services/fork/fork_settings.dart';
+import '../books_sheet_shared.dart' show coverGridTileWidth;
 
 // Fork-owned: the cover shapes where each BookOrbit book comes in its own
-// frame, in a Dashboard shelf's sheet (section_detail_sheet.dart) and in the
-// series sheet (series_books_sheet.dart), and, while
-// ForkSettings.ownCoverShapes is on, the Library grid and the author and
-// narrator sheets. See FORK_NOTES.md.
+// frame: in the series sheet (series_books_sheet.dart) and, while
+// ForkSettings.ownCoverShapes is on, the Dashboard's shelves and their sheets
+// (section_detail_sheet.dart), the Library grid and the author and narrator
+// sheets. See FORK_NOTES.md.
 
 /// The cover shapes of one shelf's books. With [ownFrames] each book takes
 /// the frame BookOrbit gave it; otherwise, or for a book with none, the
@@ -16,16 +17,15 @@ class ForkShelfFrames {
   /// The shape the cover setting gives, width over height.
   final double fallback;
 
-  /// Whether books take their own frames (a Dashboard shelf, the series
-  /// sheet) rather than all taking [fallback].
+  /// Whether books take their own frames rather than all taking [fallback].
   final bool ownFrames;
 
   /// Whether any book on the shelf is portrait, so the grid needs room for
   /// portrait covers.
   final bool hasPortrait;
 
-  /// Whether the books come in more than one shape. Covers then sit at the
-  /// bottom of a portrait slot so they line up.
+  /// Whether the books come in more than one shape, so their covers need a
+  /// shared slot to line up: [slotOf]'s or [forkGridSlot]'s.
   final bool mixed;
 
   ForkShelfFrames._(this.fallback, this.ownFrames, this.hasPortrait, this.mixed);
@@ -82,6 +82,8 @@ const double forkGridTitleShare = 0.54;
 /// A shelf sheet's cover: [child] drawn in [item]'s own shape, as wide as
 /// the space it is given, at the bottom of [item]'s slot from [frames]. On a
 /// shelf of one shape it is just that shape, as upstream's `AspectRatio` was.
+/// With [slot] it is instead centred in a [slot]-shaped space at that space's
+/// full height, as a Dashboard shelf's covers are.
 class ForkShelfCover extends StatelessWidget {
   /// The shelf's cover shapes.
   final ForkShelfFrames frames;
@@ -92,12 +94,16 @@ class ForkShelfCover extends StatelessWidget {
   /// The cover with its badges.
   final Widget child;
 
+  /// The shape of a slot the cover is centred in, if it has one.
+  final double? slot;
+
   /// Creates [item]'s cover from [frames].
-  const ForkShelfCover({super.key, required this.frames, required this.item, required this.child});
+  const ForkShelfCover({super.key, required this.frames, required this.item, required this.child, this.slot});
 
   @override
   Widget build(BuildContext context) {
     final frame = frames.of(item);
+    if (slot != null) return forkCoverInSlot(slot, AspectRatio(aspectRatio: frame, child: child));
     return AspectRatio(
       aspectRatio: frames.slotOf(item),
       child: Align(
@@ -124,10 +130,10 @@ double forkTitledGridExtent({
     + (secondLine ? textScaler.scale(10 * labelScale) * 1.6 : 0)
     + 8;
 
-/// The cover shapes of a grid of [items] outside the shelf and series
-/// sheets (the Library grid, the author and narrator sheets): each book's
-/// own while [ForkSettings.ownCoverShapes] is on, else all [fallback], the
-/// shape that grid had before.
+/// The cover shapes of a grid of [items] outside the series sheet (the
+/// Library grid, the author and narrator sheets, the Dashboard's shelves and
+/// their sheets' grids): each book's own while [ForkSettings.ownCoverShapes]
+/// is on, else all [fallback], the shape that grid had before.
 ///
 /// These grids lay covers out as BookOrbit's app does: on a grid of mixed
 /// shapes every cover sits in a square slot ([forkGridSlot]), a square
@@ -144,6 +150,63 @@ double forkGridSlot(ForkShelfFrames frames, Object? item) => frames.mixed ? 1.0 
 /// Whether a grid from [forkGridFrames] needs portrait-height cells: only
 /// when every cover is portrait.
 bool forkGridTall(ForkShelfFrames frames) => frames.hasPortrait && !frames.mixed;
+
+/// Width over height of a cell in a grid from [forkGridFrames], the Library
+/// grid's own: taller when every cover is portrait.
+double forkGridCellRatio(ForkShelfFrames frames) => forkCellRatioForSlot(forkGridTall(frames) ? forkPortraitFrame : 1.0);
+
+/// The Library grid's cell, width over height, for covers in a [slot]-shaped space.
+double forkCellRatioForSlot(double slot) => slot < 1.0 ? _forkPortraitCellRatio : _forkSquareCellRatio;
+
+const double _forkPortraitCellRatio = 0.48;
+const double _forkSquareCellRatio = 0.68;
+
+/// The cover shapes of a shelf's sheet that isn't a [ForkDashboardCovers]
+/// grid: on the Dashboard each book's own while
+/// [ForkSettings.ownCoverShapes] is on, otherwise all [fallback].
+ForkShelfFrames forkSheetFrames(List<dynamic> entities, double fallback, {required bool dashboard}) =>
+    ForkShelfFrames(entities, fallback, ownFrames: dashboard && ForkSettings.ownCoverShapes);
+
+/// The slot of every cover on a Dashboard shelf and in its sheet's grid. While
+/// books take their own shapes it is always square, so an ebook is as tall as
+/// an audiobook on every shelf, even one of nothing but ebooks; otherwise it
+/// is the shape the cover setting gives.
+double forkDashboardSlot(ForkShelfFrames frames) => frames.ownFrames ? 1.0 : frames.fallback;
+
+/// How a Dashboard shelf's covers follow the Library grid: the shapes of its
+/// books, one slot for all of them, and the Library tile's width.
+class ForkDashboardCovers {
+  /// The shelf's cover shapes.
+  final ForkShelfFrames frames;
+
+  /// The width of a Library tile at the current cover size.
+  final double tileWidth;
+
+  ForkDashboardCovers._(this.frames, this.tileWidth);
+
+  /// The covers of [entities] on a shelf whose cover setting is [setting]. A
+  /// playlist entry nests its book, so its shape is read from that.
+  factory ForkDashboardCovers.of(BuildContext context, List<dynamic> entities, double setting) =>
+      ForkDashboardCovers._(
+        forkGridFrames([
+          for (final e in entities) (e is Map<String, dynamic> ? e['libraryItem'] : null) ?? e,
+        ], setting),
+        coverGridTileWidth(context),
+      );
+
+  /// The slot every cover on the shelf sits in.
+  double get slot => forkDashboardSlot(frames);
+
+  /// The height of a cover's slot.
+  double get coverHeight => tileWidth / slot;
+
+  /// The width of a Continue card: the tile and the padding around its cover.
+  double get heroCardWidth => tileWidth + 20;
+
+  /// The height of a row of Continue cards: the slot, the padding above and
+  /// below the cover, and the 106 px card text upstream's square row leaves.
+  double get heroRowHeight => coverHeight + 14 + 106;
+}
 
 /// [cover] centred in a [slot]-shaped space as tall as it is, or [cover]
 /// alone when there is no slot.
