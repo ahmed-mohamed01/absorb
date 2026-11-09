@@ -1000,10 +1000,8 @@ extension _ForkBookOrbitWatchlist on BookOrbitApiService {
       final work = w['work'];
       if (work is! Map) continue;
       for (final format in _watchFormats) {
-        final release = (w['releases'] as Map?)?[format];
         final ids = work['requestIds'] as Map?;
-        final held = ids?[format] == requestId || (release is Map && release['requestId'] == requestId);
-        if (!held) continue;
+        if (!_watchHoldsRequest(w, format, requestId)) continue;
         final statuses = (work['requestStatuses'] as Map?) ?? {};
         if (statuses[format] == status) continue;
         work['requestStatuses'] = {...statuses, format: status};
@@ -1014,19 +1012,39 @@ extension _ForkBookOrbitWatchlist on BookOrbitApiService {
     return changed;
   }
 
-  /// Re-reads the work a library book matched, so a format that just landed
-  /// reads as owned. False when BookOrbit has not matched it yet.
-  Future<bool> _watchRefreshByBook(int bookId) async {
-    try {
-      final res = await _boGet('/monitored/works/by-book/$bookId') as Map<String, dynamic>;
-      final work = res['work'];
-      if (work is! Map<String, dynamic>) return false;
-      _watchPatchWork(work);
-      return true;
-    } catch (e) {
-      debugPrint('[Watchlist] work for book $bookId: $e');
-      return false;
+  bool _watchHoldsRequest(Map watchlist, String format, int requestId) {
+    final release = (watchlist['releases'] as Map?)?[format];
+    return ((watchlist['work'] as Map?)?['requestIds'] as Map?)?[format] == requestId ||
+        (release is Map && release['requestId'] == requestId);
+  }
+
+  static final _watchAuthorReReadAt = <int, DateTime>{};
+
+  /// Re-reads the author of the work holding a request that landed, so the
+  /// format reads as owned: reading an author makes BookOrbit settle what its
+  /// works own, and no route goes from a book to its work. At most every 30
+  /// seconds per request, as the sheet polls while it waits. False when nothing
+  /// was read.
+  Future<bool> _watchRefreshRequestWork(int requestId) async {
+    final last = _watchAuthorReReadAt[requestId];
+    if (last != null && DateTime.now().difference(last) < const Duration(seconds: 30)) return false;
+    final authors = <String>{
+      for (final item in _watchItems.values)
+        if (item['watchlist'] case final Map w)
+          if (_watchFormats.any((format) => _watchHoldsRequest(w, format, requestId)))
+            if (w['monitorAuthorId'] case final String id when id.isNotEmpty) id,
+    };
+    if (authors.isEmpty) return false;
+    _watchAuthorReReadAt[requestId] = DateTime.now();
+    var read = false;
+    for (final author in authors) {
+      try {
+        if (await _watchAuthorWithWorks(author, fresh: true) != null) read = true;
+      } catch (e) {
+        debugPrint('[Watchlist] author $author after request $requestId: $e');
+      }
     }
+    return read;
   }
 
   void _watchAfterChange() {
@@ -1149,7 +1167,7 @@ extension BookOrbitWatchlistActions on BookOrbitApiService {
       // A percent alone is not a change: the grid is not reloaded for it.
       final changed = _watchPatchRequestStatus(requestId, status);
       final bookId = (res['matchedBookId'] as num?)?.toInt();
-      final refreshed = status == 'available' && bookId != null && await _watchRefreshByBook(bookId);
+      final refreshed = status == 'available' && bookId != null && await _watchRefreshRequestWork(requestId);
       if (changed || refreshed) _watchAfterChange();
       return {
         'status': status,

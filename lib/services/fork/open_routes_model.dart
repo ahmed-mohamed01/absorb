@@ -2,12 +2,15 @@
 // signed-in client, free of the network so they can be tested. Its activity
 // routes only answer its official iOS app. See FORK_NOTES.md.
 
+import 'dart:convert';
+
 /// BookOrbit's `AUDIO_FORMAT_LIST`.
 const _audioFormats = {'m4b', 'mp3', 'm4a', 'opus', 'ogg', 'flac'};
 
 /// How many weeks of sessions one Stats load reads. Each costs a request, plus
-/// up to [forkBookLookupsPerWeek] more, and the server allows 120 a minute per
-/// client, so a long history fills in over several loads.
+/// up to [forkBookLookupsPerWeek] more, so a long history fills in over several
+/// loads. BookOrbit doesn't rate limit these routes; this keeps one load modest
+/// for the server and for any proxy in front of it.
 const forkSplitWeeks = 8;
 
 /// How many books in a week have their sessions' kinds looked up.
@@ -19,9 +22,12 @@ typedef ForkMediaSplit = ({num listening, num reading});
 /// One write for `PUT /reading-progress` from the older route's [body].
 /// Narration fields stay out when [body] leaves them out, which keeps the
 /// marker the server holds; only an explicit null clears it.
-Map<String, dynamic> forkProgressWrite(int fileId, Map<String, dynamic> body) => {
+/// [editedAt] is when the move was made, for one saved late: a position saved
+/// on the server since then stays.
+Map<String, dynamic> forkProgressWrite(int fileId, Map<String, dynamic> body, {DateTime? editedAt}) => {
       'fileId': fileId,
       'percentage': body['percentage'],
+      if (editedAt != null) 'editedAt': editedAt.toUtc().toIso8601String(),
       if (body['source'] != null) 'kind': body['source'],
       if (body.containsKey('cfi') || body.containsKey('pageNumber'))
         'text': {
@@ -37,6 +43,17 @@ Map<String, dynamic> forkProgressWrite(int fileId, Map<String, dynamic> body) =>
           if (body.containsKey('mediaOverlaySectionIndex')) 'sectionIndex': body['mediaOverlaySectionIndex'],
         },
     };
+
+/// The book a 404 [body] says this one was merged into, if it says so.
+String? forkMergedInto(String body) {
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is! Map || decoded['errorCode'] != 'BOOK_MERGED') return null;
+    return (decoded['errorMeta'] as Map?)?['targetBookId']?.toString();
+  } catch (_) {
+    return null;
+  }
+}
 
 /// The last part of a library folder's [path], or [fallback] for a root.
 String forkFolderName(Object? path, String fallback) {
@@ -177,11 +194,14 @@ class ForkWeekSplit {
 
   const ForkWeekSplit(this.listen, this.read, this.books);
 
-  factory ForkWeekSplit.fromSessions(Iterable<Map<String, dynamic>> sessions, Duration offset) {
+  /// The server answers [week] with every session overlapping it, so one
+  /// crossing Monday 00:00 UTC comes back in two weeks. It counts in the week
+  /// it started.
+  factory ForkWeekSplit.fromSessions(Iterable<Map<String, dynamic>> sessions, Duration offset, ForkIsoWeek week) {
     final listen = <String, num>{}, read = <String, num>{};
     final books = <String, Map<String, dynamic>>{};
     for (final s in _uniqueSessions(sessions)) {
-      if (s.seconds <= 0) continue;
+      if (s.seconds <= 0 || forkIsoWeek(s.start.toUtc()) != week) continue;
       final target = forkIsListeningSession(s.session) ? listen : read;
       forkSecondsByDay(s.start, s.end, s.seconds, offset).forEach((day, part) {
         target[day] = (target[day] ?? 0) + part;

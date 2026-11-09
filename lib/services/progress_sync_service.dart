@@ -535,8 +535,11 @@ class ProgressSyncService {
         await _removePendingEbook(entry.key);
         continue;
       }
+      final queuedAt = entry.value['ts'] as int?;
       final ok = await api.updateEbookProgress(entry.key,
-          ebookLocation: loc, ebookProgress: prog);
+          ebookLocation: loc,
+          ebookProgress: prog,
+          editedAt: queuedAt == null ? null : DateTime.fromMillisecondsSinceEpoch(queuedAt));
       if (ok) {
         await _removePendingEbook(entry.key);
         _consecutiveFailures = 0;

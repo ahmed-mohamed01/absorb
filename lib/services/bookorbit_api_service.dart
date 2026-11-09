@@ -24,6 +24,7 @@ class _BoHttpError implements Exception {
   String? get serverCode {
     try {
       final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['errorCode'] is String) return decoded['errorCode'] as String;
       if (decoded is Map && decoded['code'] is String) return decoded['code'] as String;
     } catch (_) {}
     return null;
@@ -1314,7 +1315,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     if (!fresh && at != null && DateTime.now().difference(at) < _detailTtl) {
       return _details[k]!;
     }
-    final d = await _boGet('/books/$bookId') as Map<String, dynamic>;
+    final d = await _forkFollowMerge(bookId, (id) => _boGet('/books/$id')) as Map<String, dynamic>;
     _keepDetail(k, d);
     return d;
   }
@@ -4736,9 +4737,10 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     }
   }
 
-  Future<void> _saveEbookProgress(String bookId, String? location, double? progress) async {
-    await _backOnContinue(bookId);
-    final detail = await _detail(bookId);
+  Future<void> _saveEbookProgress(String givenId, String? location, double? progress, {DateTime? editedAt}) async {
+    await _backOnContinue(givenId);
+    final detail = await _detail(givenId);
+    final bookId = '${detail['id'] ?? givenId}';
     final media = BookOrbitMapper.item(detail: detail)['media'] as Map;
     final ebook = media['ebookFile'] as Map?;
     final fileId = ebook?['ino'];
@@ -4750,7 +4752,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
       if (location != null && page == null) 'cfi': location,
       if (page != null) 'pageNumber': page,
       ...await _narrationSpotToKeep(bookId, media, '$fileId'),
-    });
+    }, editedAt: editedAt);
     if (progress != null && progress >= 1.0) {
       await _setStatus(bookId, {'status': 'read'});
     }
@@ -4780,7 +4782,8 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   /// BookOrbit's Currently Reading and Continue shelves. Listening sessions
   /// and finished reads stay; BookOrbit closes a read still open as abandoned.
   Future<void> _deleteProgress(String progressId) async {
-    final bookId = progressId.startsWith('bo-') ? progressId.substring(3) : progressId;
+    final givenId = progressId.startsWith('bo-') ? progressId.substring(3) : progressId;
+    final bookId = '${(await _detail(givenId))['id'] ?? givenId}';
     await _clearPosition(bookId);
     final rows = await _boGet('/books/$bookId/progress') as List<dynamic>;
     for (final row in rows.whereType<Map>()) {
@@ -4796,6 +4799,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
     if (status != null && status != 'unread' && status != 'want_to_read') {
       await _setStatus(bookId, {'status': 'unread'});
     }
+    _forgetProgress(givenId);
     _forgetProgress(bookId);
   }
 
@@ -4805,7 +4809,7 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   @override
   Future<Map<String, dynamic>?> getEbookPosition(String itemId) async {
     final detail = await _detail(itemId);
-    final fp = await _boGet('/books/$itemId/progress') as List<dynamic>;
+    final fp = await _boGet('/books/${detail['id'] ?? itemId}/progress') as List<dynamic>;
     final ebook = _ebookFrom(detail, fp);
     if (ebook.cfi == null && ebook.percent == null) return null;
     return {
@@ -4816,10 +4820,11 @@ class BookOrbitApiService extends ApiService implements BookOrbitTokenSource {
   }
 
   @override
-  Future<bool> updateEbookProgress(String itemId, {required String ebookLocation, required double ebookProgress}) async {
+  Future<bool> updateEbookProgress(String itemId,
+      {required String ebookLocation, required double ebookProgress, DateTime? editedAt}) async {
     lastEbookProgressStatus = null;
     try {
-      await _saveEbookProgress(itemId, ebookLocation, ebookProgress);
+      await _saveEbookProgress(itemId, ebookLocation, ebookProgress, editedAt: editedAt);
       lastEbookProgressStatus = 200;
       return true;
     } on _BoHttpError catch (e) {
