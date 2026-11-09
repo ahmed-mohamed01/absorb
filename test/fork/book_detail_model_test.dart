@@ -30,6 +30,16 @@ void main() {
       expect(t.subtitle, 'An Epic Tale');
     });
 
+    test('a title ending with its own subtitle says it once', () {
+      final t = forkDisplayTitle(
+          title: 'Mystery of the Exploding Teeth And Other Curiosities',
+          subtitle: 'and other curiosities',
+          series: const []);
+      expect(t.title, 'Mystery of the Exploding Teeth');
+      expect(t.subtitle, 'and other curiosities');
+      expect(forkDisplayTitle(title: 'Same', subtitle: 'Same', series: const []).title, 'Same');
+    });
+
     test('hides "Book 13" beside a series numbered 13', () {
       final t = forkDisplayTitle(title: 'X', subtitle: 'Book 13', series: [
         {'name': 'He Who Fights with Monsters', 'sequence': '13'},
@@ -252,11 +262,27 @@ void main() {
 }
 
 void _fitSeriesChipsTests() {
-  group('forkTitleMaxLines', () {
-    test('three lines fit only beside a tall cover with one name each', () {
-      expect(forkTitleMaxLines(shortCover: false, manyNames: false), 3);
-      expect(forkTitleMaxLines(shortCover: true, manyNames: false), 2);
-      expect(forkTitleMaxLines(shortCover: false, manyNames: true), 2);
+  group('forkFitTitleLines', () {
+    ({int title, int subtitle, bool clipped}) fit(int title, int subtitle, double height) => forkFitTitleLines(
+        titleLines: title, subtitleLines: subtitle, titleLineHeight: 30, subtitleLineHeight: 20, gap: 4, height: height);
+
+    test('everything shows when it fits', () {
+      expect(fit(3, 2, 134), (title: 3, subtitle: 2, clipped: false));
+      expect(fit(4, 0, 120), (title: 4, subtitle: 0, clipped: false));
+    });
+
+    test('the title goes first, keeping a line for the subtitle', () {
+      expect(fit(5, 2, 120), (title: 3, subtitle: 1, clipped: true));
+    });
+
+    test('the subtitle takes what the whole title leaves', () {
+      expect(fit(2, 4, 90), (title: 2, subtitle: 1, clipped: true));
+      expect(fit(2, 4, 110), (title: 2, subtitle: 2, clipped: true));
+    });
+
+    test('a title keeps two lines however tight it is', () {
+      expect(fit(5, 1, 10), (title: 2, subtitle: 1, clipped: true));
+      expect(fit(1, 1, 10), (title: 1, subtitle: 1, clipped: false));
     });
   });
 

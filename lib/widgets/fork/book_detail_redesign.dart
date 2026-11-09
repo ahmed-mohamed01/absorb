@@ -39,6 +39,7 @@ String _kPagesCount(int n) => n == 1 ? '1 page' : '$n pages';
 /// Per-sheet state the layout needs and the upstream state class doesn't have.
 class _ForkDetailUi {
   bool aboutExpanded = false;
+  bool titleExpanded = false;
   String tab = 'similar';
   // Once the reader picks a tab, the page stops choosing one for them.
   bool userPickedTab = false;
@@ -747,17 +748,10 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
       Expanded(child: _ForkHeroText(
         maxHeight: dualCovers || !_squareCovers ? _ForkCoverStack.height : _ForkCoverStack.audioSide,
         footMinHeight: _forkChipHeight(context),
-        head: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-          Text(shown.title, maxLines: forkTitleMaxLines(shortCover: !dualCovers && _squareCovers, manyNames: _forkByLineHasManyNames(metadata)), overflow: TextOverflow.ellipsis,
-              style: tt.titleLarge?.copyWith(
-                  fontFamily: _kHeadingFont, fontSize: 23, height: 1.25, fontWeight: FontWeight.w700, color: cs.onSurface)),
-          if (shown.subtitle.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(shown.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: tt.bodySmall?.copyWith(fontSize: 13, color: cs.onSurfaceVariant)),
-          ],
-          ..._forkByline(context, metadata, cs, tt, accent),
-        ]),
+        titleOpen: _ui.titleExpanded,
+        title: _forkHeroTitle(context, cs, tt, shown),
+        byline: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
+            children: _forkByline(context, metadata, cs, tt, accent)),
         foot: seriesEntries.isEmpty ? null : _forkSeriesChips(context, l, accent, seriesEntries),
       )),
     ]);
@@ -765,10 +759,55 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
 
   double _forkChipHeight(BuildContext context) => MediaQuery.textScalerOf(context).scale(26);
 
-  bool _forkByLineHasManyNames(Map<String, dynamic> metadata) {
-    bool many(String list, String joined) =>
-        ((metadata[list] as List<dynamic>?)?.length ?? 0) > 1 || ((metadata[joined] as String?)?.contains(',') ?? false);
-    return many('authors', 'authorName') || many('narrators', 'narratorName');
+  /// The title and subtitle in the height [_ForkHeroText] leaves them. When
+  /// that cuts any text, a tap on it shows it all and a second tap folds it.
+  Widget _forkHeroTitle(BuildContext context, ColorScheme cs, TextTheme tt, ({String title, String subtitle}) shown) {
+    const gap = 4.0;
+    final inherited = DefaultTextStyle.of(context).style;
+    final titleStyle = inherited.merge(tt.titleLarge?.copyWith(
+        fontFamily: _kHeadingFont, fontSize: 23, height: 1.25, fontWeight: FontWeight.w700, color: cs.onSurface));
+    final subtitleStyle = inherited.merge(tt.bodySmall?.copyWith(fontSize: 13, color: cs.onSurfaceVariant));
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    return LayoutBuilder(builder: (context, box) {
+      ({int lines, double lineHeight}) measure(String text, TextStyle style) {
+        if (text.isEmpty) return (lines: 0, lineHeight: 0);
+        final painter = TextPainter(text: TextSpan(text: text, style: style), textDirection: direction, textScaler: scaler)
+          ..layout(maxWidth: box.maxWidth);
+        final lines = painter.computeLineMetrics().length;
+        final lineHeight = painter.height / lines;
+        painter.dispose();
+        return (lines: lines, lineHeight: lineHeight);
+      }
+
+      final title = measure(shown.title, titleStyle);
+      final subtitle = measure(shown.subtitle, subtitleStyle);
+      final fit = forkFitTitleLines(
+        titleLines: title.lines,
+        subtitleLines: subtitle.lines,
+        titleLineHeight: title.lineHeight,
+        subtitleLineHeight: subtitle.lineHeight,
+        gap: gap,
+        height: box.maxHeight,
+      );
+      final text = Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        Text(shown.title, maxLines: fit.title, overflow: TextOverflow.ellipsis, style: titleStyle),
+        if (fit.subtitle > 0) ...[
+          const SizedBox(height: gap),
+          Text(shown.subtitle, maxLines: fit.subtitle, overflow: TextOverflow.ellipsis, style: subtitleStyle),
+        ],
+      ]);
+      if (!fit.clipped && !_ui.titleExpanded) return text;
+      return Semantics(
+        button: true,
+        expanded: _ui.titleExpanded,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _ui.titleExpanded = !_ui.titleExpanded),
+          child: text,
+        ),
+      );
+    });
   }
 
   /// A bordered chip per series, as many as fit in the height the cover
@@ -1516,29 +1555,35 @@ class _ForkCoverStack extends StatelessWidget {
   }
 }
 
-/// The text beside the cover: [head] at its own height, then 8 down the [foot]
-/// laid out in what's left of [maxHeight], never under [footMinHeight]. A
-/// Column can't do this: past its height, its fixed head would overflow.
+/// The text beside the cover, within [maxHeight] as far as it can be: the
+/// [byline] measured first, then the [title] above it given what's left after
+/// one row of [foot] ([footMinHeight]) and free of the limit when [titleOpen],
+/// then 8 down the foot in whatever the two leave, never under its minimum. A
+/// Column can't do this: past its height, its fixed children would overflow.
 class _ForkHeroText extends MultiChildRenderObjectWidget {
   final double maxHeight;
   final double footMinHeight;
+  final bool titleOpen;
 
   _ForkHeroText({
     required this.maxHeight,
     required this.footMinHeight,
-    required Widget head,
+    required this.titleOpen,
+    required Widget title,
+    required Widget byline,
     Widget? foot,
-  }) : super(children: [head, ?foot]);
+  }) : super(children: [title, byline, ?foot]);
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
-      _RenderForkHeroText(maxHeight, footMinHeight);
+      _RenderForkHeroText(maxHeight, footMinHeight, titleOpen);
 
   @override
   void updateRenderObject(BuildContext context, _RenderForkHeroText renderObject) {
     renderObject
       ..cap = maxHeight
-      ..footMin = footMinHeight;
+      ..footMin = footMinHeight
+      ..titleOpen = titleOpen;
   }
 }
 
@@ -1548,7 +1593,7 @@ class _RenderForkHeroText extends RenderBox
     with
         ContainerRenderObjectMixin<RenderBox, _ForkHeroTextData>,
         RenderBoxContainerDefaultsMixin<RenderBox, _ForkHeroTextData> {
-  _RenderForkHeroText(this._cap, this._footMin);
+  _RenderForkHeroText(this._cap, this._footMin, this._titleOpen);
 
   static const _gap = 8.0;
 
@@ -1566,6 +1611,13 @@ class _RenderForkHeroText extends RenderBox
     markNeedsLayout();
   }
 
+  bool _titleOpen;
+  set titleOpen(bool v) {
+    if (v == _titleOpen) return;
+    _titleOpen = v;
+    markNeedsLayout();
+  }
+
   @override
   void setupParentData(RenderBox child) {
     if (child.parentData is! _ForkHeroTextData) child.parentData = _ForkHeroTextData();
@@ -1574,11 +1626,19 @@ class _RenderForkHeroText extends RenderBox
   @override
   void performLayout() {
     final width = constraints.maxWidth;
-    final head = firstChild!;
-    head.layout(BoxConstraints(maxWidth: width), parentUsesSize: true);
-    (head.parentData! as _ForkHeroTextData).offset = Offset.zero;
-    var height = head.size.height;
-    final foot = childAfter(head);
+    final title = firstChild!;
+    final byline = childAfter(title)!;
+    final foot = childAfter(byline);
+    byline.layout(BoxConstraints(maxWidth: width), parentUsesSize: true);
+    final footRoom = foot == null ? 0.0 : _gap + _footMin;
+    final titleRoom = _cap - byline.size.height - footRoom;
+    title.layout(
+      BoxConstraints(maxWidth: width, maxHeight: _titleOpen ? double.infinity : (titleRoom < 0 ? 0 : titleRoom)),
+      parentUsesSize: true,
+    );
+    (title.parentData! as _ForkHeroTextData).offset = Offset.zero;
+    (byline.parentData! as _ForkHeroTextData).offset = Offset(0, title.size.height);
+    var height = title.size.height + byline.size.height;
     if (foot != null) {
       final left = _cap - height - _gap;
       foot.layout(BoxConstraints(maxWidth: width, maxHeight: left < _footMin ? _footMin : left), parentUsesSize: true);

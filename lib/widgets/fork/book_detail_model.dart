@@ -18,6 +18,7 @@ const forkOtherCellFlex = 2;
 /// lines, so the part after the colon comes off; it becomes the subtitle when
 /// the book has none of its own. A subtitle that only restates the series
 /// ("1 (Honor Harrington)", or "Book 13" beside a "#13" series) is dropped.
+/// A title that ends with its own subtitle loses that end.
 /// An empty subtitle means none is shown.
 ({String title, String subtitle}) forkDisplayTitle({
   required String title,
@@ -25,8 +26,12 @@ const forkOtherCellFlex = 2;
   required List<dynamic> series,
 }) {
   final colon = title.indexOf(': ');
-  final mainTitle = colon > 0 ? title.substring(0, colon).trim() : title;
+  var mainTitle = colon > 0 ? title.substring(0, colon).trim() : title;
   final shown = subtitle.isNotEmpty ? subtitle : colon > 0 ? title.substring(colon + 2).trim() : '';
+  // Some titles end with their own subtitle; it reads once, on its own line.
+  if (shown.isNotEmpty && mainTitle.length > shown.length && mainTitle.toLowerCase().endsWith(shown.toLowerCase())) {
+    mainTitle = mainTitle.substring(0, mainTitle.length - shown.length).replaceFirst(RegExp(r'[\s,:;\-–—]+$'), '');
+  }
   if (shown.isEmpty) return (title: mainTitle, subtitle: '');
   final sequences = <String>{for (final s in series) _sequence(s)}..remove('');
   final bookNumber =
@@ -236,15 +241,35 @@ bool forkStatusCellRoomy({required double pageWidth, required int otherCells, re
 String _sequence(dynamic s) => s is Map ? '${s['sequence'] ?? ''}'.trim() : '';
 String _name(dynamic s) => s is Map ? '${s['name'] ?? ''}'.trim() : '';
 
+/// The lines the title and subtitle beside the cover get from [height]: all
+/// of them when they fit. Otherwise the title comes first, keeping one line
+/// for the subtitle, and the subtitle has what's left. A title always gets two
+/// lines however tight it is. [clipped] says some text was cut, so a tap has
+/// something to show.
+({int title, int subtitle, bool clipped}) forkFitTitleLines({
+  required int titleLines,
+  required int subtitleLines,
+  required double titleLineHeight,
+  required double subtitleLineHeight,
+  required double gap,
+  required double height,
+}) {
+  double subtitleBlock(int lines) => lines > 0 ? gap + lines * subtitleLineHeight : 0;
+  if (titleLines * titleLineHeight + subtitleBlock(subtitleLines) <= height) {
+    return (title: titleLines, subtitle: subtitleLines, clipped: false);
+  }
+  final titleRoom = height - subtitleBlock(subtitleLines > 0 ? 1 : 0);
+  final title = (titleRoom / titleLineHeight).floor().clamp(titleLines < 2 ? titleLines : 2, titleLines);
+  final subtitle = subtitleLines == 0
+      ? 0
+      : ((height - title * titleLineHeight - gap) / subtitleLineHeight).floor().clamp(1, subtitleLines);
+  return (title: title, subtitle: subtitle, clipped: title < titleLines || subtitle < subtitleLines);
+}
+
 /// Which of the series chips (by [widths], in order) fit in [maxRows] rows of
 /// [maxWidth]: as many as fit, the rest counted in [hidden] for a `+N` chip at
 /// the end of the last row. A chip wider than a row keeps a row of its own and
 /// is clipped by its caller.
-/// The lines a title may take so the text beside the cover stays within its
-/// height with a row of series chips: fewer beside a short square cover, or
-/// when several names can wrap the byline.
-int forkTitleMaxLines({required bool shortCover, required bool manyNames}) => shortCover || manyNames ? 2 : 3;
-
 ({List<List<int>> rows, int hidden}) forkFitSeriesChips(
   List<double> widths, {
   required double maxWidth,
