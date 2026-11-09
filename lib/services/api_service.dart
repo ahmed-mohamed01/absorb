@@ -34,6 +34,7 @@ import 'fork/perf_caches.dart';
 import 'fork/dashboard_widgets_model.dart';
 import 'fork/account_zone.dart';
 import 'fork/open_routes_model.dart';
+import 'fork/metadata_edit_form.dart';
 
 part 'bookorbit_api_service.dart';
 part 'bookorbit_admin_api.dart';
@@ -45,6 +46,7 @@ part 'fork/bookorbit_perf.dart';
 part 'fork/bookorbit_timing_index.dart';
 part 'fork/bookorbit_library_picker.dart';
 part 'fork/bookorbit_open_routes.dart';
+part 'fork/bookorbit_metadata_edit.dart';
 part 'bookorbit_email_api.dart';
 
 /// Outcome of a local-session upsert. [serverTooOld] flags a 404/501 (the

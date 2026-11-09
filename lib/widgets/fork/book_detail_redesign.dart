@@ -31,10 +31,26 @@ const _kStop = 'Stop';
 const _kDates = 'Dates';
 const _kStarted = 'Started';
 const _kFinished = 'Finished';
+const _kEditMetadataAction = 'Edit metadata';
 const _kListen = 'Listen';
 const _kShowEbook = 'Show the ebook';
 const _kShowAudiobook = 'Show the audiobook';
 String _kPagesCount(int n) => n == 1 ? '1 page' : '$n pages';
+
+/// Sends a BookOrbit book (not a Book Dock file) to the fork's Edit
+/// metadata page; `_openEditPage` asks first. False leaves it to upstream's
+/// editor.
+extension _ForkEditMetadata on _BookDetailSheetContentState {
+  bool _forkOpenEditMetadata(AuthProvider auth, String title) {
+    if (!auth.isBookOrbit || BookDockInfo.of(_item) != null) return false;
+    forkOpenEditMetadata(context, widget.itemId, title);
+    return true;
+  }
+
+  /// BookOrbit's quick sheet has no Edit pill: Edit metadata lives in the
+  /// full sheet's menu, which Book Details opens.
+  bool _forkHideQuickEdit(AuthProvider auth, bool quickSheet) => quickSheet && auth.isBookOrbit;
+}
 
 /// Per-sheet state the layout needs and the upstream state class doesn't have.
 class _ForkDetailUi {
@@ -652,7 +668,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     }
     if (_hasLocalOverride) add(Icons.layers_clear_rounded, l.clearLocalMetadata, () => _clearOverride(context));
     if (_showGoodreads) add(Icons.local_library_rounded, l.searchOnGoodreads, () => _openGoodreads(title, authorName));
-    if (auth.canUpdateMetadata && !offline) add(Icons.edit_rounded, l.edit, () => _openEditPage(auth, title, isEbookOnly));
+    if (auth.canUpdateMetadata && !offline) add(Icons.edit_rounded, _kEditMetadataAction, () => _openEditPage(auth, title, isEbookOnly));
 
     rule = true;
     if (auth.canDelete && !offline) {

@@ -77,6 +77,7 @@ import '../utils/share_origin.dart';
 import '../services/fork/watchlist_info.dart';
 import 'fork/watchlist_cover_badges.dart';
 import '../screens/fork/watchlist_release_screen.dart';
+import 'fork/edit_metadata_page.dart';
 part 'fork/book_detail_fork.dart';
 part 'fork/book_detail_redesign.dart';
 part 'fork/watchlist_detail.dart';
@@ -2051,7 +2052,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
         if (_showGoodreads) {
           add(Icons.local_library_rounded, l.searchOnGoodreads, () => _openGoodreads(title, authorName));
         }
-        if (auth.canUpdateMetadata && !lib.isOffline) {
+        if (auth.canUpdateMetadata && !lib.isOffline && !_forkHideQuickEdit(auth, includeOpenDetails)) {
           add(Icons.edit_rounded, l.edit, () => _openEditPage(auth, title, isEbookOnly));
         }
         final item = _item;
@@ -2327,6 +2328,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
   /// Opens the unified per-book edit page (Chapters / Details / Match / Encode)
   /// from the "..." menu.
   void _openEditPage(AuthProvider auth, String title, bool isEbookOnly) {
+    if (_forkOpenEditMetadata(auth, title)) return;
     final media = _item!['media'] as Map<String, dynamic>? ?? {};
     final meta = media['metadata'] as Map<String, dynamic>? ?? {};
     final mediaTags = ((media['tags'] as List<dynamic>?) ?? const []).cast<String>();
