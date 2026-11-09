@@ -18,6 +18,7 @@ Future<T?> showStackableSheet<T>({
   Color? backgroundColor,
   bool useSafeArea = false,
   bool showHandle = false,
+  AnimationStyle? animationStyle,
 }) {
   FocusManager.instance.primaryFocus?.unfocus();
 
@@ -37,6 +38,7 @@ Future<T?> showStackableSheet<T>({
     isScrollControlled: true,
     enableDrag: true,
     useSafeArea: useSafeArea,
+    sheetAnimationStyle: animationStyle,
     backgroundColor: backgroundColor ?? (showHandle ? null : Colors.transparent),
     // Sheets are capped narrower than a landscape screen; cover grids inside
     // size their columns from the sheet, not the screen.

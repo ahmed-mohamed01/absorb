@@ -263,6 +263,10 @@ extension _ForkBookOrbitPerf on BookOrbitApiService {
   }
 }
 
+/// Whether [forkCachedBookOrbitItem] answers with the book's full detail, not
+/// only a card that has no description.
+bool forkHasCachedBookOrbitDetail(String itemId) => BookOrbitApiService._details.containsKey(itemId);
+
 /// What a BookOrbit detail sheet can paint before its own request returns:
 /// the book's full detail if it was fetched before (any Home card), else the
 /// last card built for it, with the card's progress. Null on other servers.

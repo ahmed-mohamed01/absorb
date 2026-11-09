@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -18,12 +17,12 @@ import 'tinted_sheet.dart';
 // For the book page's parts, which reach the sync state through this file.
 export '../../services/fork/position_sync_controller.dart' show PositionSyncController;
 
-// Fork-owned: the BookOrbit Position sync button in the detail page's top
-// bar and its sheet: the chain of the book's own files (ebook, read-aloud,
+// Fork-owned: the BookOrbit Position sync sheet, opened from the Editions
+// card: the chain of the book's own files (ebook, read-aloud,
 // audiobook and its Audiobookshelf match), upstream's read-aloud generator
 // and its options, and the Audiobookshelf match search. The hooks are the
-// import in book_detail_sheet.dart and the button in the redesigned page's
-// top bar. See FORK_NOTES.md.
+// import in book_detail_sheet.dart and the Editions card on the redesigned
+// page. See FORK_NOTES.md.
 
 const _green = Color(0xFF8FDCA8);
 const _amber = Color(0xFFF2C46D);
@@ -85,90 +84,9 @@ String formatSyncBytes(int bytes) {
 const double _switchCenter = 6 + 44 / 2;
 const double _railGapHalf = 18;
 
-// ─── Button ─────────────────────────────────────────────────
-
-/// The detail page's top-bar Position sync button. It shows nothing for a
-/// book with nothing to sync.
-class ForkSyncButton extends StatefulWidget {
-  final String itemId;
-  final Color accent;
-  final BookOrbitApiService api;
-
-  /// The cover's container colour, which tints the sheet like the page it
-  /// opens over. Null keeps the plain sheet colour.
-  final Color? tint;
-
-  const ForkSyncButton({
-    super.key,
-    required this.itemId,
-    required this.accent,
-    required this.api,
-    this.tint,
-  });
-
-  /// Only BookOrbit books on a reachable server; dock items have no numeric
-  /// id.
-  static bool shouldShow(AuthProvider auth, LibraryProvider lib, String itemId) =>
-      auth.isBookOrbit && !lib.isOffline && auth.apiService is BookOrbitApiService && int.tryParse(itemId) != null;
-
-  @override
-  State<ForkSyncButton> createState() => _ForkSyncButtonState();
-}
-
-class _ForkSyncButtonState extends State<ForkSyncButton> {
-  late final PositionSyncController _c;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = acquirePositionSync(widget.api, widget.itemId);
-  }
-
-  @override
-  void dispose() {
-    PositionSyncController.release(_c);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: _c,
-      builder: (context, _) {
-        if (!_c.eligible) return const SizedBox.shrink();
-        return _barButton(context);
-      },
-    );
-  }
-
-  /// The chain's state on a bare icon, drawn the way the bookmark beside it
-  /// is: the sheet's swap icon, outlined until the files sync, filled in the
-  /// cover's accent when they're in sync, outlined in the accent when one
-  /// wants checking, filled red when something needs attention, and in the
-  /// blue build ring while a timing index or a read-aloud is made.
-  Widget _barButton(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final state = _c.buttonState;
-    final building = state == SyncButtonState.building;
-    final (IconData icon, Color? color) = switch (state) {
-      SyncButtonState.inSync => (Icons.swap_horizontal_circle, widget.accent),
-      SyncButtonState.checkSync => (Icons.swap_horizontal_circle_outlined, widget.accent),
-      SyncButtonState.needsAttention => (Icons.swap_horizontal_circle, cs.error),
-      _ => (Icons.swap_horizontal_circle_outlined, null),
-    };
-    return IconButton(
-      tooltip: _c.buttonTooltip,
-      onPressed: () => showPositionSyncSheet(context, _c, widget.accent,
-          coverHeaders: context.read<LibraryProvider>().mediaHeaders, tint: widget.tint),
-      icon: SizedBox(width: 26, height: 26, child: Stack(alignment: Alignment.center, children: [
-        if (building)
-          CircularProgressIndicator(strokeWidth: 2.5, value: _c.buttonProgress, color: _blue,
-              backgroundColor: cs.onSurface.withValues(alpha: 0.12)),
-        Icon(icon, size: building ? 16 : 24, color: building ? null : color),
-      ])),
-    );
-  }
-}
+/// Only BookOrbit books on a reachable server; dock items have no numeric id.
+bool forkPositionSyncApplies(AuthProvider auth, LibraryProvider lib, String itemId) =>
+    auth.isBookOrbit && !lib.isOffline && auth.apiService is BookOrbitApiService && int.tryParse(itemId) != null;
 
 /// Takes a book's shared controller for a widget on its page and starts it
 /// loading after the frame (loading notifies, and the sheet may be
@@ -180,11 +98,11 @@ PositionSyncController acquirePositionSync(BookOrbitApiService api, String itemI
 }
 
 /// Starts a book's sync state loading as its detail sheet opens, beside the
-/// book itself, so the button's status arrives with the rest of the sheet.
+/// book itself, so its status arrives with the rest of the sheet.
 /// Call the returned release when the sheet closes.
 ({PositionSyncController controller, VoidCallback release})? prefetchPositionSync(
     AuthProvider auth, LibraryProvider lib, String itemId) {
-  if (!ForkSyncButton.shouldShow(auth, lib, itemId)) return null;
+  if (!forkPositionSyncApplies(auth, lib, itemId)) return null;
   final c = acquirePositionSync(auth.apiService as BookOrbitApiService, itemId);
   return (controller: c, release: () => PositionSyncController.release(c));
 }

@@ -2,6 +2,7 @@ import 'package:absorb/widgets/fork/book_detail_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  _fitSeriesChipsTests();
   group('forkSeriesEntries', () {
     test('wraps the single map a series sheet hands over', () {
       final s = {'id': 'a', 'name': 'The Calamitous Bob', 'sequence': '2'};
@@ -59,7 +60,7 @@ void main() {
   });
 
   group('series', () {
-    test('the pill shows the first numbered series, the rest as others', () {
+    test('the chip shows the first numbered series, the rest as others', () {
       final s = forkMainSeries([
         {'name': 'Honorverse'},
         {'name': 'Honor Harrington', 'sequence': '1'},
@@ -247,5 +248,59 @@ void main() {
     expect(forkStatusCellRoomy(pageWidth: 380, otherCells: 2, textScale: 1), isTrue);
     expect(forkStatusCellRoomy(pageWidth: 320, otherCells: 1, textScale: 1), isTrue);
     expect(forkStatusCellRoomy(pageWidth: 600, otherCells: 2, textScale: 1.3), isFalse);
+  });
+}
+
+void _fitSeriesChipsTests() {
+  group('forkTitleMaxLines', () {
+    test('three lines fit only beside a tall cover with one name each', () {
+      expect(forkTitleMaxLines(shortCover: false, manyNames: false), 3);
+      expect(forkTitleMaxLines(shortCover: true, manyNames: false), 2);
+      expect(forkTitleMaxLines(shortCover: false, manyNames: true), 2);
+    });
+  });
+
+  group('forkFitSeriesChips', () {
+    double more(int _) => 30;
+    test('the +N chip is measured for the number it will show', () {
+      final asked = <int>[];
+      final f = forkFitSeriesChips([60, 60, 60, 60], maxWidth: 130, maxRows: 1, gap: 6, moreWidth: (hidden) {
+        asked.add(hidden);
+        return 20.0 * hidden;
+      });
+      expect(asked, contains(2));
+      expect(f.rows, [[0]]);
+      expect(f.hidden, 3);
+    });
+    test('all fit, nothing hidden', () {
+      final f = forkFitSeriesChips([100, 80], maxWidth: 200, maxRows: 2, gap: 6, moreWidth: more);
+      expect(f.rows, [[0, 1]]);
+      expect(f.hidden, 0);
+    });
+    test('wraps onto the rows allowed', () {
+      final f = forkFitSeriesChips([150, 150], maxWidth: 200, maxRows: 2, gap: 6, moreWidth: more);
+      expect(f.rows, [[0], [1]]);
+      expect(f.hidden, 0);
+    });
+    test('past the last row the rest become +N', () {
+      final f = forkFitSeriesChips([150, 100, 150, 150], maxWidth: 200, maxRows: 2, gap: 6, moreWidth: more);
+      expect(f.rows, [[0], [1]]);
+      expect(f.hidden, 2);
+    });
+    test('the last row gives up a chip for the +N', () {
+      final f = forkFitSeriesChips([190, 90, 90, 150], maxWidth: 200, maxRows: 2, gap: 6, moreWidth: more);
+      expect(f.rows, [[0], [1]]);
+      expect(f.hidden, 2);
+    });
+    test('one row keeps its chip even when the +N will squeeze it', () {
+      final f = forkFitSeriesChips([190, 190], maxWidth: 200, maxRows: 1, gap: 6, moreWidth: more);
+      expect(f.rows, [[0]]);
+      expect(f.hidden, 1);
+    });
+    test('a chip wider than the row still gets one', () {
+      final f = forkFitSeriesChips([400], maxWidth: 200, maxRows: 1, gap: 6, moreWidth: more);
+      expect(f.rows, [[0]]);
+      expect(f.hidden, 0);
+    });
   });
 }

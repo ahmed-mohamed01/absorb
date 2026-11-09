@@ -235,3 +235,45 @@ bool forkStatusCellRoomy({required double pageWidth, required int otherCells, re
 
 String _sequence(dynamic s) => s is Map ? '${s['sequence'] ?? ''}'.trim() : '';
 String _name(dynamic s) => s is Map ? '${s['name'] ?? ''}'.trim() : '';
+
+/// Which of the series chips (by [widths], in order) fit in [maxRows] rows of
+/// [maxWidth]: as many as fit, the rest counted in [hidden] for a `+N` chip at
+/// the end of the last row. A chip wider than a row keeps a row of its own and
+/// is clipped by its caller.
+/// The lines a title may take so the text beside the cover stays within its
+/// height with a row of series chips: fewer beside a short square cover, or
+/// when several names can wrap the byline.
+int forkTitleMaxLines({required bool shortCover, required bool manyNames}) => shortCover || manyNames ? 2 : 3;
+
+({List<List<int>> rows, int hidden}) forkFitSeriesChips(
+  List<double> widths, {
+  required double maxWidth,
+  required int maxRows,
+  required double gap,
+  required double Function(int hidden) moreWidth,
+}) {
+  final rows = <List<int>>[];
+  var used = 0.0;
+  var shown = 0;
+  for (var i = 0; i < widths.length; i++) {
+    final w = widths[i];
+    if (rows.isNotEmpty && used + gap + w <= maxWidth) {
+      rows.last.add(i);
+      used += gap + w;
+    } else {
+      if (rows.length >= maxRows) break;
+      rows.add([i]);
+      used = w;
+    }
+    shown++;
+  }
+  if (shown == widths.length) return (rows: rows, hidden: 0);
+  // Room for the +N chip, giving up the last row's chips (all but one) for it.
+  final last = rows.last;
+  double lastWidth() => last.fold<double>(0, (a, i) => a + widths[i]) + gap * (last.length - 1);
+  while (last.length > 1 && lastWidth() + gap + moreWidth(widths.length - shown) > maxWidth) {
+    last.removeLast();
+    shown--;
+  }
+  return (rows: rows, hidden: widths.length - shown);
+}

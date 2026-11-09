@@ -1,11 +1,10 @@
 // ignore_for_file: invalid_use_of_protected_member
 part of '../book_detail_sheet.dart';
 
-// Fork-owned: the book detail page as redesigned in October 2026. A top bar
-// (back, download, position sync, Absorbing, more), the cover beside the
-// title, one rating line, a stat strip with the reading status in the
-// middle, the main and secondary buttons, About with the genres behind Read
-// more, then Related (the book's series and More like this) / Chapters /
+// Fork-owned: the book detail page as redesigned in October 2026 and refreshed
+// in November. A lip, the cover beside the title, a stat strip with the reading
+// status in the middle, the main and secondary buttons with the one menu beside
+// them, the Editions card, About with the genres behind Read more, then Related (the book's series and More like this) / Chapters /
 // Bookmarks as tabs. Menus open as bottom sheets. book_detail_sheet.dart
 // calls `_forkBuildContent`, and `_forkLoadSeriesBooks` from `_loadItem`.
 // See FORK_NOTES.md.
@@ -13,10 +12,14 @@ part of '../book_detail_sheet.dart';
 // New text stays plain until upstream takes it (FORK_NOTES rule 4).
 const _kBookInfo = 'Book info';
 const _kReleased = 'Released';
+// The title and section headings, as Apple Books does; the rest keeps the app's.
+const _kHeadingFont = 'Source Serif 4';
 const _kPages = 'Pages';
+
+TextStyle? _forkSectionHeading(TextTheme tt) =>
+    tt.titleMedium?.copyWith(fontFamily: _kHeadingFont, fontWeight: FontWeight.w700);
 const _kLength = 'Length';
 const _kMarkNotFinished = 'Mark as not finished';
-const _kAllActions = 'All actions';
 const _kNoSimilar = 'No similar books found';
 const _kRelated = 'Related';
 String _kMoreIn(String series) => 'More in $series';
@@ -28,7 +31,6 @@ const _kStop = 'Stop';
 const _kDates = 'Dates';
 const _kStarted = 'Started';
 const _kFinished = 'Finished';
-const _kAllActionsHint = 'Edit, reset progress, delete and more';
 const _kListen = 'Listen';
 const _kShowEbook = 'Show the ebook';
 const _kShowAudiobook = 'Show the audiobook';
@@ -78,23 +80,29 @@ Color? _forkReadStatusColor(String s) => switch (s) {
     };
 
 /// One row in a pick-from sheet: an icon (in [color] when it has one), a
-/// label, an optional [subtitle] under it and [detail] on the right.
+/// label and [detail] on the right.
 class _ForkSheetOption<T> {
   final T value;
   final IconData icon;
   final Color? color;
   final String label;
   final bool selected;
-  final String? subtitle;
   final String? detail;
+
+  /// The whole row in this colour rather than just its icon (Delete).
+  final Color? tint;
+
+  /// A rule above the row, grouping a long menu.
+  final bool ruleAbove;
   const _ForkSheetOption({
     required this.value,
     required this.icon,
     required this.label,
     this.color,
     this.selected = false,
-    this.subtitle,
     this.detail,
+    this.tint,
+    this.ruleAbove = false,
   });
 }
 
@@ -244,7 +252,8 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     final similar = forkSimilarToShow(_similar, itemId: widget.itemId, title: title);
     // A seed from a shelf card has no description, so its chips would show
     // open and then fold behind Read more when the full detail lands.
-    final hasAbout = descRaw.isNotEmpty || ((genres.isNotEmpty || tags.isNotEmpty) && !_forkShowingSeed);
+    final hasAbout = descRaw.isNotEmpty ||
+        ((genres.isNotEmpty || tags.isNotEmpty) && (!_forkShowingSeed || forkHasCachedBookOrbitDetail(widget.itemId)));
     final personalNote = ((_item?['bookOrbit'] as Map?)?['personalNote'] as String?)?.trim() ?? '';
     final similarReady = similar.isNotEmpty && !lib.isOffline;
     final seriesReady = _ui.seriesBooks.isNotEmpty && !lib.isOffline;
@@ -304,7 +313,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
             decoration: forkTintedSheetDecoration(ctx, _forkSheetTint),
             child: ListView(controller: sc, padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), children: [
             forkSheetHandle(ctx),
-            Text(_kBookInfo, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+            Text(_kBookInfo, style: _forkSectionHeading(tt)),
             const SizedBox(height: 16),
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (year.isNotEmpty) _chip(Icons.calendar_today_rounded, year),
@@ -339,12 +348,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         );
 
     return ListView(controller: widget.scrollController, padding: EdgeInsets.fromLTRB(16, 8, 16, 32 + MediaQuery.of(context).viewPadding.bottom), children: [
-      _forkTopBar(context, cs, l, accent, lib, auth,
-          title: title, authorName: authorName, isEbookOnly: isEbookOnly, ebookFile: ebookFile,
-          narrated: narrated, isFinished: isFinished, currentTime: currentTime, duration: duration,
-          progress: progress, showInfo: showInfo,
-          showPreview: showPreview, chapters: chapters),
-      const SizedBox(height: 12),
+      _forkLip(context),
       _forkHero(context, cs, tt, l, accent, lib, title: title, subtitle: subtitle, metadata: metadata, seriesEntries: seriesEntries,
           dualCovers: dualCovers, ebookFront: ebookFront, auth: auth),
       const SizedBox(height: 20),
@@ -376,6 +380,14 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         child: Row(key: ValueKey(ebookFront), children: [
           Expanded(child: actions.primary),
           if (actions.secondary != null) ...[const SizedBox(width: 10), actions.secondary!],
+          ?_forkDownloadFallback(context, l, accent, lib, auth,
+              title: title, authorName: authorName, isEbookOnly: isEbookOnly, ebookFile: ebookFile),
+          const SizedBox(width: 10),
+          _secondaryIconButton(accent, Icons.more_vert_rounded, () => _forkOpenMenu(context, cs, l, lib, auth,
+              title: title, authorName: authorName, isEbookOnly: isEbookOnly, ebookFile: ebookFile,
+              narrated: narrated, isFinished: isFinished, currentTime: currentTime, duration: duration,
+              progress: progress, showInfo: showInfo, showPreview: showPreview, chapters: chapters),
+              tooltip: l.moreActions),
         ]),
       ),
       _forkSyncStatusLine(cs, tt, l, accent),
@@ -385,7 +397,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         const SizedBox(height: 10),
         _forkPreviewLine(cs, tt, accent, chapters, duration),
       ],
-      if (ForkSyncButton.shouldShow(auth, lib, widget.itemId))
+      if (forkPositionSyncApplies(auth, lib, widget.itemId))
         ForkEditionsCard(
           key: ValueKey('fork-editions-${widget.itemId}'),
           itemId: widget.itemId, api: auth.apiService as BookOrbitApiService, accent: accent,
@@ -395,7 +407,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         ),
       if (hasAbout) ...[
         const SizedBox(height: 20),
-        Text(l.aboutSection, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+        Text(l.aboutSection, style: _forkSectionHeading(tt)),
         const SizedBox(height: 8),
         _forkAbout(context, cs, tt, l, accent, descRaw, [
           ...genres.map((g) => filterChip(g, false)),
@@ -443,7 +455,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         final showSeries = seriesReady || seriesLoading;
         final showSimilar = similarReady || similarLoading;
         Widget heading(String text) => Padding(padding: const EdgeInsets.only(bottom: 12),
-            child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)));
+            child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: _forkSectionHeading(tt)));
         return [
           if (showSeries) ...[
             heading(_kMoreIn(_ui.seriesName)),
@@ -463,23 +475,26 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     ]);
   }
 
-  Widget _forkTopBar(BuildContext context, ColorScheme cs, AppLocalizations l, Color accent, LibraryProvider lib, AuthProvider auth, {
+  /// The top of the sheet: a handle that says it opens and closes from the
+  /// bottom. It drags with the page; a tap closes it for anyone who can't drag.
+  Widget _forkLip(BuildContext context) => Semantics(
+        button: true,
+        label: MaterialLocalizations.of(context).closeButtonLabel,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => Navigator.of(context).pop(),
+          child: Padding(padding: const EdgeInsets.only(top: 2, bottom: 2), child: forkSheetHandle(context)),
+        ),
+      );
+
+  /// The download button for when no Editions card offers one: while it fails,
+  /// offline, and on Audiobookshelf, which has no such card.
+  Widget? _forkDownloadFallback(BuildContext context, AppLocalizations l, Color accent, LibraryProvider lib, AuthProvider auth, {
     required String title,
     required String authorName,
     required bool isEbookOnly,
     required dynamic ebookFile,
-    required bool narrated,
-    required bool isFinished,
-    required double currentTime,
-    required double duration,
-    required double progress,
-    required VoidCallback showInfo,
-    required bool showPreview,
-    required List<dynamic> chapters,
   }) {
-    final onAbsorbing = lib.isOnAbsorbingList(widget.itemId);
-    final syncPair = !isEbookOnly && ebookFile != null && ebookExtFromFile(ebookFile) == '.epub';
-    final syncButton = ForkSyncButton.shouldShow(auth, lib, widget.itemId);
     Widget? download;
     if (!isEbookOnly) {
       download = DownloadWideButton(itemId: widget.itemId, coverUrl: _coverUrl, title: title, author: authorName, accent: accent, iconOnly: true);
@@ -499,101 +514,152 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         );
       });
     }
-    // The Editions card has a download button per edition, so the top one
-    // goes once that card shows its rows, and stays while it loads or fails
-    // or while the card is away (offline).
-    final cardSync = syncButton ? _forkSyncController : null;
-    return Row(children: [
-      IconButton(
-        tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-        onPressed: () => Navigator.of(context).pop(),
-        icon: const Icon(Icons.arrow_back_ios_new_rounded),
-      ),
-      const Spacer(),
-      if (download != null)
-        if (cardSync == null)
-          download
-        else
-          ListenableBuilder(
-            listenable: cardSync,
-            builder: (_, __) => forkEditionsCardShows(cardSync) ? const SizedBox.shrink() : download!,
-          ),
-      // On BookOrbit, position sync: how the book's own files stand (the sheet
-      // BookOrbit's own sync button opens). Audiobookshelf has no such sync,
-      // so there it lines up the audiobook and its EPUB on the phone.
-      if (syncButton)
-        ForkSyncButton(
-          key: ValueKey('fork-sync-${widget.itemId}'),
-          itemId: widget.itemId, accent: accent, api: auth.apiService as BookOrbitApiService,
-          tint: PlayerSettings.einkMode ? null : _coverScheme?.primaryContainer,
-        )
-      else if (!auth.isBookOrbit && syncPair && !lib.isOffline)
-        ListenableBuilder(
-          listenable: Listenable.merge([ReadListenSync.instance.syncing, ReadListenSync.instance.failed]),
-          builder: (_, __) {
-            final busy = ReadListenSync.instance.syncing.value.containsKey(widget.itemId);
-            final bad = !busy && ReadListenSync.instance.failed.value.containsKey(widget.itemId);
-            return IconButton(
-              tooltip: bad ? l.syncFailed : l.syncPosition,
-              onPressed: busy
-                  ? null
-                  : () => narrated
-                      ? showOverlayToast(context, l.syncAlreadyTogether, icon: Icons.check_rounded)
-                      : ReadListenSync.instance.syncNow(widget.itemId),
-              icon: busy
-                  ? SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: accent))
-                  : Icon(bad ? Icons.sync_problem_rounded : Icons.sync_rounded, color: bad ? cs.error : null),
-            );
-          }),
-      IconButton(
-        tooltip: onAbsorbing ? Wording.of(context).removeFromAbsorbing : Wording.of(context).addToAbsorbing,
-        icon: Icon(onAbsorbing ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, color: onAbsorbing ? accent : null),
-        onPressed: () async {
-          if (onAbsorbing) {
-            await lib.removeFromAbsorbing(widget.itemId);
-            HapticFeedback.mediumImpact();
-            if (context.mounted) showOverlayToast(context, Wording.of(context).removedFromAbsorbing, icon: Icons.remove_circle_outline_rounded);
-          } else {
-            await addToAbsorbingWithPicker(context, widget.itemId, item: _item, addedToast: Wording.of(context).addedToAbsorbing);
-          }
-        },
-      ),
-      IconButton(
-        tooltip: l.moreActions,
-        icon: const Icon(Icons.more_horiz_rounded),
-        onPressed: () async {
-          final value = await _forkPickFromSheet<String>(null, [
-            _ForkSheetOption(value: 'finished', icon: isFinished ? Icons.remove_done_rounded : Icons.check_circle_outline_rounded, color: null,
-              label: isFinished ? _kMarkNotFinished : Wording.of(context).fullyAbsorbAction, selected: false),
-            if (!lib.isOffline && !auth.isBookOrbit)
-              _ForkSheetOption(value: 'playlist', icon: Icons.playlist_add_rounded, color: null, label: l.addToPlaylist, selected: false),
-            if (!lib.isOffline && !lib.isPodcastLibrary && (auth.isAdmin || auth.isBookOrbit))
-              _ForkSheetOption(value: 'collection', icon: Icons.collections_bookmark_outlined, color: null, label: l.addToCollection, selected: false),
-            // A sample of the narration, offered until you're a minute in.
-            if (showPreview)
-              _ForkSheetOption(value: 'preview', icon: (_preview?.isPlaying ?? false) ? Icons.stop_rounded : Icons.headphones_rounded, color: null,
-                label: (_preview?.isPlaying ?? false) ? l.chapterStopPreview : l.preview, selected: false),
-            _ForkSheetOption(value: 'info', icon: Icons.info_outline_rounded, color: null, label: _kBookInfo, selected: false),
-            _ForkSheetOption(value: 'all', icon: Icons.grid_view_rounded, label: _kAllActions, subtitle: _kAllActionsHint),
-          ]);
-          if (!context.mounted) return;
-          switch (value) {
-            case 'finished':
-              isFinished ? _markNotFinished(context, auth, currentTime, duration) : _markFinished(context, auth, duration);
-            case 'playlist':
-              PlaylistPickerSheet.show(context, widget.itemId);
-            case 'collection':
-              CollectionPickerSheet.show(context, widget.itemId);
-            case 'preview':
-              _togglePreview(context, chapters, duration);
-            case 'info':
-              showInfo();
-            case 'all':
-              _showMoreSheet(context, auth, lib, title, authorName, progress, isFinished, duration, ebookFile, isEbookOnly);
-          }
-        },
-      ),
+    if (download == null) return null;
+    final button = download;
+    final cardSync = forkPositionSyncApplies(auth, lib, widget.itemId) ? _forkSyncController : null;
+    Widget spaced() => Padding(padding: const EdgeInsets.only(left: 6), child: button);
+    if (cardSync == null) return spaced();
+    return ListenableBuilder(
+      listenable: cardSync,
+      builder: (_, __) => forkEditionsCardShows(cardSync) ? const SizedBox.shrink() : spaced(),
+    );
+  }
+
+  /// Every other action on the book, one flat menu grouped by rules. A row's
+  /// value is what it does, run once the menu has closed.
+  Future<void> _forkOpenMenu(BuildContext context, ColorScheme cs, AppLocalizations l, LibraryProvider lib, AuthProvider auth, {
+    required String title,
+    required String authorName,
+    required bool isEbookOnly,
+    required dynamic ebookFile,
+    required bool narrated,
+    required bool isFinished,
+    required double currentTime,
+    required double duration,
+    required double progress,
+    required VoidCallback showInfo,
+    required bool showPreview,
+    required List<dynamic> chapters,
+  }) async {
+    final offline = lib.isOffline;
+    final wording = Wording.of(context);
+    final onAbsorbing = lib.isOnAbsorbingList(widget.itemId);
+    final syncPair = !isEbookOnly && ebookFile != null && ebookExtFromFile(ebookFile) == '.epub';
+    final listened = !isEbookOnly && (progress > 0 || isFinished);
+    final read = lib.getEbookProgress(widget.itemId) > 0 || (isEbookOnly && (progress > 0 || isFinished));
+    final continueShelf = lib.continueShelfOf(widget.itemId);
+    final continueSeriesId = lib.continueSeriesShelfMatch([
+      for (final s in forkSeriesEntries((_item?['media'] as Map?)?['metadata'] is Map ? ((_item?['media'] as Map)['metadata'] as Map)['series'] : null))
+        if (s is Map && '${s['id'] ?? ''}'.trim().isNotEmpty) '${s['id']}'.trim(),
     ]);
+    final serverEbookFile = resolveEbookFile(_item);
+    final item = _item;
+
+    final options = <_ForkSheetOption<VoidCallback>>[];
+    var rule = false;
+    void add(IconData icon, String label, VoidCallback run, {Color? tint}) {
+      options.add(_ForkSheetOption(value: run, icon: icon, label: label, tint: tint, ruleAbove: rule && options.isNotEmpty));
+      rule = false;
+    }
+
+    // What you do with the book.
+    add(onAbsorbing ? Icons.remove_circle_outline_rounded : Icons.add_circle_outline_rounded,
+        onAbsorbing ? wording.removeFromAbsorbing : wording.addToAbsorbing, () async {
+      if (onAbsorbing) {
+        await lib.removeFromAbsorbing(widget.itemId);
+        HapticFeedback.mediumImpact();
+        if (context.mounted) showOverlayToast(context, Wording.of(context).removedFromAbsorbing, icon: Icons.remove_circle_outline_rounded);
+      } else {
+        await addToAbsorbingWithPicker(context, widget.itemId, item: _item, addedToast: Wording.of(context).addedToAbsorbing);
+      }
+    });
+    if (!offline && !lib.isPodcastLibrary && (auth.isAdmin || auth.isBookOrbit)) {
+      add(Icons.collections_bookmark_outlined, l.addToCollection, () => CollectionPickerSheet.show(context, widget.itemId));
+    }
+    if (!offline && !auth.isBookOrbit) {
+      add(Icons.playlist_add_rounded, l.addToPlaylist, () => PlaylistPickerSheet.show(context, widget.itemId));
+    }
+    add(isFinished ? Icons.remove_done_rounded : Icons.check_circle_outline_rounded,
+        isFinished ? _kMarkNotFinished : wording.fullyAbsorbAction,
+        () => isFinished ? _markNotFinished(context, auth, currentTime, duration) : _markFinished(context, auth, duration));
+    // A sample of the narration, offered until you're a minute in.
+    if (showPreview) {
+      add((_preview?.isPlaying ?? false) ? Icons.stop_rounded : Icons.headphones_rounded,
+          (_preview?.isPlaying ?? false) ? l.chapterStopPreview : l.preview,
+          () => _togglePreview(context, chapters, duration));
+    }
+    // Audiobookshelf lines up the audiobook and its EPUB on the phone; on
+    // BookOrbit sync lives in the Editions card.
+    if (!auth.isBookOrbit && syncPair && !offline) {
+      // The status line under the buttons shows a running sync and offers a retry.
+      final sync = ReadListenSync.instance;
+      final failed = sync.failed.value.containsKey(widget.itemId);
+      add(failed ? Icons.sync_problem_rounded : Icons.sync_rounded, l.syncPosition, () {
+        if (narrated) {
+          showOverlayToast(context, l.syncAlreadyTogether, icon: Icons.check_rounded);
+        } else if (!sync.syncing.value.containsKey(widget.itemId)) {
+          sync.syncNow(widget.itemId);
+        }
+      }, tint: failed ? cs.error : null);
+    }
+    if (listened || read) {
+      add(Icons.restart_alt_rounded, l.resetProgress, () => _resetProgress(context, auth, duration, listened: listened, read: read));
+    }
+    if (continueShelf != null && !offline) {
+      final reading = continueShelf == 'continue-reading';
+      add(Icons.playlist_remove_rounded, reading ? l.removeFromContinueReading : l.removeFromContinueListening,
+          () => _removeFromContinueListening(context, auth, lib, reading: reading));
+    }
+    if (continueSeriesId != null && !offline) {
+      add(Icons.bookmark_remove_rounded, l.removeSeriesFromContinueSeries,
+          () => _removeSeriesFromContinueSeries(context, auth, lib, continueSeriesId));
+    }
+
+    // Sending the file elsewhere. These need the server's own file entry.
+    rule = true;
+    if (serverEbookFile != null) {
+      add(_ebookSaved ? Icons.download_done_rounded : Icons.save_alt_rounded, l.ebookSaveToDevice,
+          () => _saveEbook(context, auth, exportEbookFile(_item) ?? serverEbookFile, title));
+    }
+    if (serverEbookFile != null && auth.ereaderDevices.isNotEmpty) {
+      add(Icons.send_to_mobile_rounded, l.sendToEreader, () => _sendToEreader(context, auth));
+    }
+    if (auth.bookOrbitAdmin?.emailSend == true && !offline && !ApiService.isBookDockItem(widget.itemId) && boSendableFiles(_item).isNotEmpty) {
+      add(Icons.send_to_mobile_rounded, l.sendToEreader, () => showBookOrbitSendSheet(context, item: _item!, title: title));
+    }
+
+    // Details.
+    rule = true;
+    add(Icons.info_outline_rounded, _kBookInfo, showInfo);
+    if (!offline) {
+      add(Icons.history_rounded, l.historyServerTab, () => showPlaybackHistorySheet(
+            context,
+            itemId: widget.itemId,
+            initialTab: PlaybackHistoryTab.sessions,
+            accent: _coverScheme?.primary ?? cs.primary,
+          ));
+    }
+    if (item != null) {
+      add(Icons.description_outlined, l.fileInfoTitle, () => showBookFilesSheet(context, item, onFilesChanged: _filesChanged));
+    }
+
+    // Changing the book's record.
+    rule = true;
+    if (auth.apiService != null && !offline) {
+      add(Icons.manage_search_rounded, _hasLocalOverride ? l.reLookupLocalMetadata : l.lookupLocalMetadata,
+          () => _openMetadataLookup(context, auth, title, authorName));
+    }
+    if (_hasLocalOverride) add(Icons.layers_clear_rounded, l.clearLocalMetadata, () => _clearOverride(context));
+    if (_showGoodreads) add(Icons.local_library_rounded, l.searchOnGoodreads, () => _openGoodreads(title, authorName));
+    if (auth.canUpdateMetadata && !offline) add(Icons.edit_rounded, l.edit, () => _openEditPage(auth, title, isEbookOnly));
+
+    rule = true;
+    if (auth.canDelete && !offline) {
+      add(Icons.delete_outline_rounded, l.deleteFromServerAction, () => _deleteFromServer(context, auth, lib, title), tint: cs.error);
+    }
+
+    final run = await _forkPickFromSheet<VoidCallback>(null, options, maxHeightShare: 0.7, rowHeight: 48);
+    if (context.mounted) run?.call();
   }
 
   Widget _forkHero(BuildContext context, ColorScheme cs, TextTheme tt, AppLocalizations l, Color accent, LibraryProvider lib, {
@@ -606,26 +672,27 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     required AuthProvider auth,
   }) {
     final shown = forkDisplayTitle(title: title, subtitle: subtitle, series: seriesEntries);
-    // The watchlist's cover size: 112 x 168 for a 2:3 cover, and a square
-    // one at about the same area.
+    // A 2:3 cover and a square one at about the same area.
     final coverHeight = _squareCovers ? _ForkCoverStack.audioSide : _ForkCoverStack.ebookSize.height;
     final coverWidth = _squareCovers ? _ForkCoverStack.audioSide : _ForkCoverStack.ebookSize.width;
     String slotUrl(bool ebook, int width) =>
         auth.apiService!.getCoverUrl(widget.itemId, width: width, coverSlot: ebook ? 'ebook' : 'audio');
-    // The covers here are at most 140 wide, so the 400 wide thumbnail list
+    // The covers here are at most 161 wide, so the 400 wide thumbnail list
     // screens already cached is sharp enough and shows at once; the full
     // size cover is only fetched when one is opened.
     final heroUrl = _coverUrl == null || _coverUrl!.startsWith('/')
         ? _coverUrl
         : lib.getCoverUrl(widget.itemId, coverRatio: _itemFrame);
-    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    // The text is centred on the cover, so the two read as one block whatever
+    // the title's length.
+    return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
       if (dualCovers) ...[
         _ForkCoverStack(
           ebookFront: ebookFront,
           cover: (ebook) => CachedNetworkImage(
             imageUrl: slotUrl(ebook, 400), fit: BoxFit.cover,
             httpHeaders: lib.mediaHeaders,
-            fadeInDuration: const Duration(milliseconds: 150),
+            fadeInDuration: Duration.zero,
             fadeOutDuration: Duration.zero,
             placeholder: (_, __) => ColoredBox(color: cs.surfaceContainerHigh),
             errorWidget: (_, __, ___) => ColoredBox(
@@ -660,7 +727,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
                   : CachedNetworkImage(
                       imageUrl: heroUrl, fit: BoxFit.cover,
                       httpHeaders: lib.mediaHeaders,
-                      fadeInDuration: const Duration(milliseconds: 150),
+                      fadeInDuration: Duration.zero,
                       fadeOutDuration: Duration.zero,
                       placeholder: (_, __) => ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerHigh),
                       errorWidget: (_, __, ___) => const SizedBox(),
@@ -676,63 +743,126 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
         ),
         const SizedBox(width: 16),
       ],
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Spaced like the watchlist's header: title, subtitle, who wrote and
-        // read it, then the series pill and the rating a step further down.
-        Text(shown.title, maxLines: 3, overflow: TextOverflow.ellipsis,
-            style: tt.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurface)),
-        if (shown.subtitle.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(shown.subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-        ],
-        ..._forkByline(context, metadata, cs, tt, accent),
-        if (seriesEntries.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          _forkSeriesPill(context, l, accent, seriesEntries),
-        ],
-      ])),
+      // The series chips get whatever height the cover leaves under the rest.
+      Expanded(child: _ForkHeroText(
+        maxHeight: dualCovers || !_squareCovers ? _ForkCoverStack.height : _ForkCoverStack.audioSide,
+        footMinHeight: _forkChipHeight(context),
+        head: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          Text(shown.title, maxLines: forkTitleMaxLines(shortCover: !dualCovers && _squareCovers, manyNames: _forkByLineHasManyNames(metadata)), overflow: TextOverflow.ellipsis,
+              style: tt.titleLarge?.copyWith(
+                  fontFamily: _kHeadingFont, fontSize: 23, height: 1.25, fontWeight: FontWeight.w700, color: cs.onSurface)),
+          if (shown.subtitle.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(shown.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: tt.bodySmall?.copyWith(fontSize: 13, color: cs.onSurfaceVariant)),
+          ],
+          ..._forkByline(context, metadata, cs, tt, accent),
+        ]),
+        foot: seriesEntries.isEmpty ? null : _forkSeriesChips(context, l, accent, seriesEntries),
+      )),
     ]);
   }
 
-  /// One series pill however many series the book is in: the first with a
-  /// number stands for them, a "+N" says there are more, and a tap then lists
-  /// them all. A stack of pills pushed the author out of view.
-  Widget _forkSeriesPill(BuildContext context, AppLocalizations l, Color accent, List<dynamic> seriesEntries) {
+  double _forkChipHeight(BuildContext context) => MediaQuery.textScalerOf(context).scale(26);
+
+  bool _forkByLineHasManyNames(Map<String, dynamic> metadata) {
+    bool many(String list, String joined) =>
+        ((metadata[list] as List<dynamic>?)?.length ?? 0) > 1 || ((metadata[joined] as String?)?.contains(',') ?? false);
+    return many('authors', 'authorName') || many('narrators', 'narratorName');
+  }
+
+  /// A bordered chip per series, as many as fit in the height the cover
+  /// leaves; the rest are a `+N` chip that lists them all. Always at least one
+  /// row. A chip opens its series.
+  Widget _forkSeriesChips(BuildContext context, AppLocalizations l, Color accent, List<dynamic> seriesEntries) {
     final series = forkMainSeries(seriesEntries)!;
-    final main = series.main;
-    final others = series.others;
-    const label = forkSeriesLabel;
-    return GestureDetector(
-      onTap: () async {
-        if (others.isEmpty) {
-          _openSeries(context, main['id'] as String?, main['name'] as String? ?? '');
-          return;
-        }
-        final picked = await _forkPickFromSheet<dynamic>(l.seriesLabel, [
-          for (final s in [main, ...others])
-            _ForkSheetOption(value: s, icon: Icons.auto_stories_rounded, color: accent, label: label(s), selected: false),
-        ]);
-        if (picked != null && context.mounted) {
-          _openSeries(context, picked['id'] as String?, picked['name'] as String? ?? '');
-        }
-      },
-      // As on the watchlist: a book icon and the series with its number in
-      // the accent, with "+N" and a down chevron only when there are more
-      // series to choose from.
-      behavior: HitTestBehavior.opaque,
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.auto_stories_rounded, size: 14, color: accent),
-        const SizedBox(width: 6),
-        Flexible(child: Text(label(main), maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent))),
-        if (others.isNotEmpty) ...[
-          const SizedBox(width: 5),
-          Text('+${others.length}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-              color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          Icon(Icons.expand_more_rounded, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+    final all = [series.main, ...series.others];
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    const gap = 6.0;
+    const padding = 8.0;
+    final chipHeight = _forkChipHeight(context);
+    // From the style the chip's Material hands its text, so it measures true.
+    final style = Theme.of(context).textTheme.bodyMedium!.copyWith(fontSize: 12, fontWeight: FontWeight.w600, color: accent);
+    double width(String text) {
+      final p = TextPainter(text: TextSpan(text: text, style: style), maxLines: 1, textDirection: direction, textScaler: scaler)..layout();
+      final w = p.width.ceilToDouble() + padding * 2 + 2;
+      p.dispose();
+      return w;
+    }
+
+    Widget chip(String text, Color color, Color border, VoidCallback onTap, {String? semantics}) => Semantics(
+          button: true,
+          label: semantics,
+          child: Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: onTap,
+              child: Container(
+                height: chipHeight,
+                padding: const EdgeInsets.symmetric(horizontal: padding),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), border: Border.all(color: border)),
+                // As wide as its text, not the room it's given.
+                child: Center(
+                  widthFactor: 1,
+                  child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: style.copyWith(color: color)),
+                ),
+              ),
+            ),
+          ),
+        );
+
+    Future<void> listAll() async {
+      final picked = await _forkPickFromSheet<dynamic>(l.seriesLabel, [
+        for (final s in all) _ForkSheetOption(value: s, icon: Icons.auto_stories_rounded, color: accent, label: forkSeriesLabel(s)),
+      ]);
+      if (picked != null && context.mounted) {
+        _openSeries(context, picked['id'] as String?, picked['name'] as String? ?? '');
+      }
+    }
+
+    return LayoutBuilder(builder: (context, box) {
+      final maxRows = ((box.maxHeight + gap) / (chipHeight + gap)).floor().clamp(1, all.length);
+      final widths = [for (final s in all) width(forkSeriesLabel(s))];
+      final fit = forkFitSeriesChips(
+        widths,
+        maxWidth: box.maxWidth,
+        maxRows: maxRows,
+        gap: gap,
+        moreWidth: (hidden) => width('+$hidden'),
+      );
+      double chipWidth(double wanted, int row) {
+        final room = box.maxWidth - (fit.hidden > 0 && row == fit.rows.length - 1 ? gap + width('+${fit.hidden}') : 0);
+        return wanted < room ? wanted : room;
+      }
+
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        for (var r = 0; r < fit.rows.length; r++) ...[
+          if (r > 0) const SizedBox(height: gap),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            for (var c = 0; c < fit.rows[r].length; c++) ...[
+              if (c > 0) const SizedBox(width: gap),
+              // The model fits a row's chips; only a lone chip can be too long.
+              SizedBox(
+                width: chipWidth(widths[fit.rows[r][c]], r),
+                child: chip(
+                  forkSeriesLabel(all[fit.rows[r][c]]),
+                  accent,
+                  accent.withValues(alpha: 0.45),
+                  () => _openSeries(context, all[fit.rows[r][c]]['id'] as String?, all[fit.rows[r][c]]['name'] as String? ?? ''),
+                ),
+              ),
+            ],
+            if (fit.hidden > 0 && r == fit.rows.length - 1) ...[
+              const SizedBox(width: gap),
+              chip('+${fit.hidden}', muted, muted.withValues(alpha: 0.4), listAll, semantics: l.seriesLabel),
+            ],
+          ]),
         ],
-      ]),
-    );
+      ]);
+    });
   }
 
   /// Who wrote and read the book, laid out like the watchlist's byline, with
@@ -755,7 +885,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
     // Names separated by commas, the first three shown until "+N" is tapped.
     Widget names(List<String> all, TextStyle? style, bool expanded, VoidCallback expand, void Function(int) open, {String prefix = ''}) {
       final visible = expanded || all.length <= 3 ? all : all.sublist(0, 3);
-      final link = style?.copyWith(color: accent, fontWeight: FontWeight.w500);
+      final link = style?.copyWith(color: accent);
       return Wrap(children: [
         if (prefix.isNotEmpty) Text(prefix, style: style),
         for (var i = 0; i < visible.length; i++)
@@ -771,13 +901,13 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: expand,
-            child: Text('  +${all.length - visible.length}', style: style?.copyWith(fontWeight: FontWeight.w600)),
+            child: Text('  +${all.length - visible.length}', style: style),
           ),
       ]);
     }
 
-    final byStyle = tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant);
-    final narratedStyle = tt.bodySmall?.copyWith(color: cs.onSurfaceVariant);
+    final byStyle = tt.bodyMedium?.copyWith(fontSize: 15, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant);
+    final narratedStyle = tt.bodySmall?.copyWith(fontSize: 13, color: cs.onSurfaceVariant);
     final narratedParts = AppLocalizations.of(context)!.narratedBy('||X||').split('||X||');
     return [
       if (authors.isNotEmpty || authorName.isNotEmpty) ...[
@@ -929,7 +1059,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   /// that wait behind it. With no description the chips show at once.
   Widget _forkAbout(BuildContext context, ColorScheme cs, TextTheme tt, AppLocalizations l, Color accent,
       String descRaw, List<Widget> chips, {Widget? trailing}) {
-    final style = tt.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.7), height: 1.5);
+    final style = tt.bodyMedium?.copyWith(fontSize: 15, height: 1.5, color: cs.onSurface.withValues(alpha: 0.87));
     if (descRaw.isEmpty) {
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: 8, runSpacing: 8, children: chips),
@@ -1104,6 +1234,8 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
                     ? blank
                     : CachedNetworkImage(
                         imageUrl: url, httpHeaders: lib.mediaHeaders, fit: BoxFit.cover,
+                        fadeInDuration: Duration.zero,
+                        fadeOutDuration: Duration.zero,
                         placeholder: (_, __) => Container(color: cs.surfaceContainerHighest),
                         errorWidget: (_, __, ___) => blank,
                       ),
@@ -1200,7 +1332,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
   /// A short list to pick from, as a bottom sheet like the app's other menus,
   /// tinted with the cover the way this sheet is. Null when dismissed.
   Future<T?> _forkPickFromSheet<T>(String? title, List<_ForkSheetOption<T>> options,
-      {String? footerTitle, List<_ForkSheetOption<T>> footer = const []}) {
+      {String? footerTitle, List<_ForkSheetOption<T>> footer = const [], double? maxHeightShare, double rowHeight = 52}) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final accent = (PlayerSettings.einkMode ? null : _coverScheme?.primary) ?? cs.primary;
@@ -1209,6 +1341,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
       isScrollControlled: true,
       // The page's shared tinted background, drawn by the content itself.
       backgroundColor: Colors.transparent,
+      constraints: maxHeightShare == null ? null : BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * maxHeightShare),
       builder: (ctx) => DecoratedBox(decoration: forkTintedSheetDecoration(ctx, _forkSheetTint), child: SafeArea(child: Padding(
         padding: const EdgeInsets.all(8),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1229,6 +1362,7 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
                         color: cs.onSurfaceVariant, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
                   )),
               ],
+              if (o.ruleAbove) Divider(height: 13, indent: 16, endIndent: 16, color: cs.onSurface.withValues(alpha: 0.10)),
               Material(
                 color: o.selected ? accent.withValues(alpha: 0.12) : Colors.transparent,
                 borderRadius: BorderRadius.circular(14),
@@ -1236,17 +1370,14 @@ extension _ForkBookDetailRedesign on _BookDetailSheetContentState {
                   borderRadius: BorderRadius.circular(14),
                   onTap: () => Navigator.pop(ctx, o.value),
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 52),
+                    constraints: BoxConstraints(minHeight: rowHeight),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       child: Row(children: [
-                        Icon(o.icon, size: 22, color: o.color ?? cs.onSurfaceVariant),
+                        Icon(o.icon, size: 22, color: o.tint ?? o.color ?? cs.onSurfaceVariant),
                         const SizedBox(width: 16),
                         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text(o.label, style: tt.bodyLarge?.copyWith(fontWeight: o.selected ? FontWeight.w600 : null)),
-                          if (o.subtitle != null)
-                            Text(o.subtitle!, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                          Text(o.label, style: tt.bodyLarge?.copyWith(fontWeight: o.selected ? FontWeight.w600 : null, color: o.tint)),
                         ])),
                         if (o.detail != null) ...[
                           const SizedBox(width: 8),
@@ -1286,10 +1417,10 @@ class _ForkCoverStack extends StatelessWidget {
     required this.title,
   });
 
-  static const ebookSize = Size(112, 168);
-  static const audioSide = 140.0;
-  // BookOrbit's stage is 1 : 1.29, here at the watchlist cover's height.
-  static const height = 168.0;
+  static const ebookSize = Size(129, 193);
+  static const audioSide = 161.0;
+  // BookOrbit's stage is 1 : 1.29.
+  static const height = 193.0;
   static const width = height / 1.29;
   // Its CSS, as shares of the stage: the portrait cover's width, the square
   // one's size and top, and where each starts when it's behind.
@@ -1383,4 +1514,84 @@ class _ForkCoverStack extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The text beside the cover: [head] at its own height, then 8 down the [foot]
+/// laid out in what's left of [maxHeight], never under [footMinHeight]. A
+/// Column can't do this: past its height, its fixed head would overflow.
+class _ForkHeroText extends MultiChildRenderObjectWidget {
+  final double maxHeight;
+  final double footMinHeight;
+
+  _ForkHeroText({
+    required this.maxHeight,
+    required this.footMinHeight,
+    required Widget head,
+    Widget? foot,
+  }) : super(children: [head, ?foot]);
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderForkHeroText(maxHeight, footMinHeight);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderForkHeroText renderObject) {
+    renderObject
+      ..cap = maxHeight
+      ..footMin = footMinHeight;
+  }
+}
+
+class _ForkHeroTextData extends ContainerBoxParentData<RenderBox> {}
+
+class _RenderForkHeroText extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _ForkHeroTextData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _ForkHeroTextData> {
+  _RenderForkHeroText(this._cap, this._footMin);
+
+  static const _gap = 8.0;
+
+  double _cap;
+  set cap(double v) {
+    if (v == _cap) return;
+    _cap = v;
+    markNeedsLayout();
+  }
+
+  double _footMin;
+  set footMin(double v) {
+    if (v == _footMin) return;
+    _footMin = v;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _ForkHeroTextData) child.parentData = _ForkHeroTextData();
+  }
+
+  @override
+  void performLayout() {
+    final width = constraints.maxWidth;
+    final head = firstChild!;
+    head.layout(BoxConstraints(maxWidth: width), parentUsesSize: true);
+    (head.parentData! as _ForkHeroTextData).offset = Offset.zero;
+    var height = head.size.height;
+    final foot = childAfter(head);
+    if (foot != null) {
+      final left = _cap - height - _gap;
+      foot.layout(BoxConstraints(maxWidth: width, maxHeight: left < _footMin ? _footMin : left), parentUsesSize: true);
+      (foot.parentData! as _ForkHeroTextData).offset = Offset(0, height + _gap);
+      height += _gap + foot.size.height;
+    }
+    size = constraints.constrain(Size(width, height));
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
+
+  @override
+  void paint(PaintingContext context, Offset offset) => defaultPaint(context, offset);
 }

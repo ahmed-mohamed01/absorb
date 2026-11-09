@@ -144,13 +144,22 @@ class PositionSyncController extends ChangeNotifier {
   }
 
   static void _resume(PositionSyncController c) {
-    if (c.editionSync?.moving == true) unawaited(c._indexFetch());
+    // A first load that failed reads everything again; nothing else would,
+    // and the Editions card draws no rows without it.
+    if (c.info == null) {
+      unawaited(c._retryLoad());
+      return;
+    }
+    // The last state shows at once; these only change what really changed.
+    unawaited(c._loadProgress());
+    unawaited(c._indexFetchIfApplies());
+    unawaited(c._loadCapability());
     if (c._job?.active == true) unawaited(c._refreshJob());
   }
 
   /// How long a released controller is kept for the next open of its book.
   /// Settable so tests can run it in milliseconds.
-  static Duration releaseGrace = const Duration(seconds: 90);
+  static Duration releaseGrace = const Duration(minutes: 10);
 
   /// Parks the controller while nothing shows it: its polling stops, and it
   /// is disposed after [releaseGrace] unless acquired again.
@@ -437,9 +446,36 @@ class PositionSyncController extends ChangeNotifier {
 
   /// Read up front so the button and the Editions card reflect the real
   /// state before the sheet is opened. Runs once per controller.
+  /// Everything the Editions card shows is read together and [loaded] flips
+  /// once, so the card never draws part of it and fills in afterwards. A
+  /// server slower than [_loadCap] gets the card with what has arrived, and
+  /// the rest lands in place.
   Future<void> loadInitial() async {
     if (_initialStarted) return;
     _initialStarted = true;
+    await _loadEverything().timeout(_loadCap, onTimeout: () {});
+    if (_disposed) return;
+    if (info == null) loadError ??= PositionSyncCopy.loadFailed;
+    loaded = true;
+    if (!_ready.isCompleted) _ready.complete();
+    _changed();
+  }
+
+  Future<void> _retryLoad() async {
+    await _loadEverything().timeout(_loadCap, onTimeout: () {});
+    if (_disposed) return;
+    if (info == null) loadError ??= PositionSyncCopy.loadFailed;
+    _changed();
+  }
+
+  static const _loadCap = Duration(seconds: 3);
+  final Completer<void> _ready = Completer<void>();
+
+  /// Completes when [loaded] turns true; never if the controller is disposed
+  /// first, so a caller waits with a timeout.
+  Future<void> get whenLoaded => _ready.future;
+
+  Future<void> _loadEverything() async {
     try {
       final (p, i) = await (api.positionSyncPermissions(), api.positionSyncBookInfo(bookId)).wait;
       perms = p;
@@ -455,9 +491,6 @@ class PositionSyncController extends ChangeNotifier {
       debugPrint('[PositionSync] book info for $bookId: $e');
     }
     if (_disposed) return;
-    if (info == null) loadError = PositionSyncCopy.loadFailed;
-    loaded = true;
-    _changed();
     await Future.wait([_loadProgress(), _indexFetchIfApplies(), _absLoadConfigured(), _loadCapability()]);
   }
 

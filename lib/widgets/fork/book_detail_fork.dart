@@ -12,6 +12,115 @@ final _forkSyncPrefetch = Expando<VoidCallback>();
 /// The sync state each open sheet holds, which the Editions card draws from.
 final _forkSyncControllers = Expando<PositionSyncController>();
 
+/// The book sheet's slide: longer than the default 250 ms, so more frames
+/// carry it, and easing into place. Closing is quicker.
+const _forkBookSheetMotion = AnimationStyle(
+  curve: Cubic(0.05, 0.7, 0.1, 1),
+  duration: Duration(milliseconds: 400),
+  reverseDuration: Duration(milliseconds: 280),
+);
+
+/// How long a tap waits for a book before its sheet slides up anyway.
+const _forkOpenWait = Duration(milliseconds: 300);
+
+/// The book the latest tap is getting ready: a second tap on it doesn't open
+/// it twice, and a tap on another book replaces it.
+String? _forkBookOpening;
+
+/// Each cover's accent by its url: palette work done once, and a sheet wears
+/// the colour from its first frame.
+final _forkCoverAccents = <String, Color>{};
+
+/// Opens a book's sheet once it's ready, or at [_forkOpenWait]. A caller may
+/// pop its own route straight after the tap, so the root navigator opens it
+/// when [context] has gone.
+void _forkOpenWhenReady(BuildContext context, String itemId, void Function(BuildContext) open) {
+  if (_forkBookOpening == itemId) return;
+  final ready = _forkPrepareBookSheet(context, itemId);
+  if (ready == null) {
+    _forkBookOpening = null;
+    open(context);
+    return;
+  }
+  _forkBookOpening = itemId;
+  ready.whenComplete(() {
+    if (_forkBookOpening != itemId) return;
+    _forkBookOpening = null;
+    final from = context.mounted ? context : rootNavigatorKey.currentContext;
+    if (from != null) open(from);
+  });
+}
+
+/// [work], given up on after [cap].
+Future<void> _forkWaitAtMost(List<Future<void>> work, Duration cap) =>
+    Future.wait(work).then<void>((_) {}).timeout(cap, onTimeout: () {});
+
+/// Loads everything a BookOrbit book's sheet shows before it opens: the sync
+/// data together, the cover decoded and its colour worked out. Null when
+/// there is nothing to wait for; otherwise done within [_forkOpenWait].
+Future<void>? _forkPrepareBookSheet(BuildContext context, String itemId) {
+  final auth = context.read<AuthProvider>();
+  final lib = context.read<LibraryProvider>();
+  final sync = prefetchPositionSync(auth, lib, itemId);
+  if (sync == null) return null;
+  final api = auth.apiService as BookOrbitApiService;
+  unawaited(sync.controller.loadInitial());
+  final stats = BookStatsService.instance.stats(itemId);
+  if (!ApiService.isWatchlistItem(itemId)) {
+    unawaited(BookStatsService.instance.ensureLoaded(itemId, api, isAdmin: auth.isAdmin));
+  }
+
+  ImageProvider cover(String url) => CachedNetworkImageProvider(url, headers: lib.mediaHeaders);
+
+  Future<void> warm(String url) async {
+    if (!context.mounted) return;
+    await precacheImage(cover(url), context, onError: (_, __) {});
+  }
+
+  // Only this cover colours the sheet.
+  Future<void> warmWithAccent(String url) async {
+    await warm(url);
+    if (_forkCoverAccents.containsKey(url)) return;
+    final accent = await coverAccentOffThread(cover(url));
+    if (accent != null) _forkCoverAccents[url] = accent;
+  }
+
+  Future<void> covers() async {
+    // A list screen's card knows the cover; without one, the detail does.
+    var item = forkCachedBookOrbitItem(itemId);
+    if (item == null) {
+      await sync.controller.whenLoaded;
+      item = forkCachedBookOrbitItem(itemId);
+    }
+    if (item == null) return;
+    await Future.wait([
+      if (lib.getCoverUrl(itemId, coverRatio: forkBookFrame(item)) case final url?) warmWithAccent(url),
+      if (forkHasBothCovers(item)) ...[
+        warm(api.getCoverUrl(itemId, width: 400, coverSlot: 'audio')),
+        warm(api.getCoverUrl(itemId, width: 400, coverSlot: 'ebook')),
+      ],
+    ]);
+  }
+
+  final coverWork = covers().catchError((Object e) => debugPrint('[BookDetail] preparing $itemId: $e'));
+  _forkCoversWarming[itemId] = coverWork;
+  unawaited(coverWork.whenComplete(() {
+    if (identical(_forkCoversWarming[itemId], coverWork)) _forkCoversWarming.remove(itemId);
+  }));
+
+  return _forkWaitAtMost([sync.controller.whenLoaded, stats.whenOwnReady, coverWork], _forkOpenWait)
+      // The sheet holds the controller from its first frame.
+      .whenComplete(() => Timer(const Duration(seconds: 2), sync.release));
+}
+
+/// Open sheets still waiting on their data, for at most [_forkHoldCap]: past
+/// that a slow server gets the page with what has arrived.
+final _forkHolding = Expando<bool>();
+const _forkHoldCap = Duration(seconds: 3);
+
+/// Books whose covers and colour are still being worked out for their sheet.
+final _forkCoversWarming = <String, Future<void>>{};
+
 /// The item each open sheet was seeded with, until `_loadItem` replaces it.
 final _forkSeeds = Expando<Map<String, dynamic>>();
 
@@ -25,6 +134,26 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
     if (sync == null) return;
     final c = sync.controller;
     void onFiles() => _filesChanged();
+    // The sheet holds its content until everything it shows has arrived.
+    final stats = BookStatsService.instance.stats(widget.itemId);
+    final noStats = ApiService.isWatchlistItem(widget.itemId);
+    final covers = _forkCoversWarming[widget.itemId];
+    if (!c.loaded || (!noStats && !stats.ownReady) || covers != null) {
+      _forkHolding[this] = true;
+      _forkWaitAtMost([c.whenLoaded, if (!noStats) stats.whenOwnReady, ?covers], _forkHoldCap).whenComplete(() {
+        _forkHolding[this] = false;
+        if (!mounted) return;
+        setState(() {
+          // A seed `_forkSeedFailed` took down stays down.
+          final seed = _forkSeeds[this];
+          final detail = seed != null && identical(_item, seed) ? forkCachedBookOrbitItem(widget.itemId) : null;
+          if (detail != null) {
+            _item = detail;
+            _forkSeeds[this] = detail;
+          }
+        });
+      });
+    }
     (bool, Object?) progressKey() {
       final p = lib.getProgressData(widget.itemId);
       return (p == null, p?['isFinished']);
@@ -50,6 +179,26 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
   void _forkReleaseSync() => _forkSyncPrefetch[this]?.call();
 
   PositionSyncController? get _forkSyncController => _forkSyncControllers[this];
+
+  /// The sync data, reading log or covers haven't arrived, so the skeleton
+  /// stays up and the page lands whole. The quick sheet shows none of them.
+  bool get _forkHoldingBack => !widget.quick && _forkHolding[this] == true;
+
+  ColorScheme? _forkCachedCoverScheme() {
+    if (_item == null) return null;
+    final url = _forkPaletteUrl ?? _coverUrl;
+    final accent = url == null ? null : _forkCoverAccents[url];
+    return accent == null ? null : ColorScheme.fromSeed(seedColor: accent, brightness: Theme.of(context).brightness);
+  }
+
+  /// Wears the accent already worked out for [url], if there is one.
+  bool _forkApplyKnownAccent(String url) {
+    final accent = _forkCoverAccents[url];
+    if (accent == null) return false;
+    final scheme = ColorScheme.fromSeed(seedColor: accent, brightness: Theme.of(context).brightness);
+    if (scheme != _rawCoverScheme) setState(() => _rawCoverScheme = scheme);
+    return true;
+  }
 
   /// Paints the sheet at once from what the app already holds for this book
   /// (its full detail if any Home card fetched it, else the last card built
@@ -97,31 +246,36 @@ extension _ForkBookDetail on _BookDetailSheetContentState {
     return context.read<LibraryProvider>().getCoverUrl(widget.itemId, coverRatio: _itemFrame);
   }
 
-  /// A skeleton in the layout's own shape for the opens nothing is cached
-  /// for, so the content lands in place instead of replacing a spinner.
+  /// A skeleton in the page's own shape and spacing (`_forkBuildContent`), so
+  /// the content lands in place instead of replacing a spinner.
   Widget _forkLoadingBody(ColorScheme cs) {
     final tone = cs.onSurface.withValues(alpha: 0.06);
     Widget box(double w, double h, {double r = 8}) => Container(
           width: w, height: h,
           decoration: BoxDecoration(color: tone, borderRadius: BorderRadius.circular(r)),
         );
+    final item = _item;
+    final dual = item != null && forkHasBothCovers(item);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          box(_squareCovers ? 140 : 112, _squareCovers ? 140 : 168, r: 12),
+        _forkLip(context),
+        Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          dual
+              ? box(_ForkCoverStack.width, _ForkCoverStack.height, r: 12)
+              : box(_squareCovers ? _ForkCoverStack.audioSide : _ForkCoverStack.ebookSize.width,
+                  _squareCovers ? _ForkCoverStack.audioSide : _ForkCoverStack.ebookSize.height, r: 12),
           const SizedBox(width: 16),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const SizedBox(height: 6),
-            box(double.infinity, 22),
+            box(double.infinity, 26),
             const SizedBox(height: 10),
-            box(140, 16),
-            const SizedBox(height: 18),
-            box(100, 14),
-            const SizedBox(height: 8),
-            box(120, 14),
+            box(120, 16),
+            const SizedBox(height: 10),
+            box(150, 14),
           ])),
         ]),
+        const SizedBox(height: 20),
+        box(double.infinity, 66),
         const SizedBox(height: 20),
         box(double.infinity, 52, r: 16),
         const SizedBox(height: 12),

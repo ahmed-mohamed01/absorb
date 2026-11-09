@@ -32,6 +32,7 @@ import 'watchlist_cover_badges.dart' show WatchlistDashedBorder;
 // New text stays plain until upstream takes it (FORK_NOTES rule 4).
 const _kEditions = 'Editions';
 const _kNotCreated = 'Not created yet';
+const _kAvailableViaIndex = 'Available via index';
 const _kCreate = 'Create';
 const _kBuilding = 'Being created';
 const _kSaveEbook = 'Download ebook';
@@ -239,6 +240,7 @@ class _ForkEditionsCardState extends State<ForkEditionsCard> {
             audioProgress: widget.progress,
             accent: widget.accent,
             buildProgress: _c.buttonProgress,
+            readAloudIndexReady: _c.index?.status == EditionSyncIndexStatus.ready,
             onOpen: _openSync,
             expanded: _expanded,
             onToggle: () => setState(() => _expanded = !_expanded),
@@ -505,6 +507,10 @@ class ForkEditionsList extends StatelessWidget {
   final Color accent;
   final double? buildProgress;
 
+  /// A finished timing index stands ready to make the missing read-aloud
+  /// from, so its row is marked with a highlighter stroke.
+  final bool readAloudIndexReady;
+
   /// Any row opens the Position sync sheet.
   final VoidCallback onOpen;
 
@@ -536,6 +542,7 @@ class ForkEditionsList extends StatelessWidget {
     required this.onToggle,
     this.expanded = false,
     this.buildProgress,
+    this.readAloudIndexReady = false,
     this.download,
     this.request,
     this.sync,
@@ -902,14 +909,21 @@ class ForkEditionsList extends StatelessWidget {
     return label ? mark : Tooltip(message: editionShortName(r.kind), child: mark);
   }
 
-  Color _markFg(BuildContext context, WorkEdition r) => r.gap != null
+  bool _highlighted(WorkEdition r) => readAloudIndexReady && r.gap == WorkEditionGap.generate;
+
+  Color _markFg(BuildContext context, WorkEdition r) => _highlighted(r)
+      // 0.179 is where black and white text have equal contrast.
+      ? (Color.alphaBlend(accent.withValues(alpha: _kMarkerAlpha), Theme.of(context).colorScheme.surface).computeLuminance() > 0.179
+            ? Colors.black87
+            : Colors.white)
+      : r.gap != null
       ? Theme.of(context).colorScheme.onSurfaceVariant
       : (Theme.of(context).brightness == Brightness.dark ? Colors.black87 : Colors.white);
 
   Widget _markShape(BuildContext context, WorkEdition r, double radius, Widget child) => r.gap != null
         ? CustomPaint(
             painter: WatchlistDashedBorder(color: Theme.of(context).colorScheme.outline, radius: radius, strokeWidth: 1),
-            child: child,
+            child: _highlighted(r) ? CustomPaint(painter: _HighlighterStroke(accent), child: child) : child,
           )
         : DecoratedBox(
             decoration: BoxDecoration(
@@ -1027,7 +1041,7 @@ class ForkEditionsList extends StatelessWidget {
     final Widget? trailing;
     switch (r.gap!) {
       case WorkEditionGap.generate:
-        note = _kNotCreated;
+        note = readAloudIndexReady ? _kAvailableViaIndex : _kNotCreated;
         trailing = _pill(context, _kCreate, Icons.auto_awesome_rounded, onOpen);
       case WorkEditionGap.building:
         note = _kBuilding;
@@ -1107,6 +1121,44 @@ class ForkEditionsList extends StatelessWidget {
       ),
     );
   }
+}
+
+/// How much of the sheet shows through the marker: a little.
+const _kMarkerAlpha = 0.85;
+
+/// A marker mark over a label in [color]: one flat shape with slanted ends and
+/// a small notch on each side, where a top line and a bottom line would meet.
+/// Inset by the height so its corners stay inside the dashed outline's ends.
+class _HighlighterStroke extends CustomPainter {
+  final Color color;
+
+  const _HighlighterStroke(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final fill = Paint()..color = color.withValues(alpha: _kMarkerAlpha);
+    // As the badge closes into its round mark, the notches ease away into a
+    // plain slanted block that sits inside the ring and still backs the icon.
+    final open = ((w - h) / h).clamp(0.0, 1.0);
+    double at(double closed, double badge) => lerpDouble(closed, badge, open)! * h;
+    canvas.drawPath(
+      Path()
+        ..moveTo(at(0.22, 0.38), at(0.16, 0.20))
+        ..quadraticBezierTo(w * 0.5, h * 0.15, w - at(0.14, 0.18), at(0.16, 0.13))
+        ..lineTo(w - at(0.18, 0.25), h * 0.45)
+        ..lineTo(w - at(0.18, 0.14), h * 0.47)
+        ..lineTo(w - at(0.22, 0.30), at(0.84, 0.83))
+        ..quadraticBezierTo(w * 0.5, h * 0.88, at(0.14, 0.28), at(0.84, 0.90))
+        ..lineTo(at(0.18, 0.35), h * 0.63)
+        ..lineTo(at(0.18, 0.22), h * 0.57)
+        ..close(),
+      fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_HighlighterStroke oldDelegate) => oldDelegate.color != color;
 }
 
 /// Where the editions' marks are while the card opens or closes: each round

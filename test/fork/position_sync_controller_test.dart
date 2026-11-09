@@ -23,7 +23,29 @@ void main() {
   Future<void> wait(Duration d) => Future<void>.delayed(d);
 
   setUp(() => PositionSyncController.releaseGrace = grace);
-  tearDown(() => PositionSyncController.releaseGrace = const Duration(seconds: 90));
+  tearDown(() => PositionSyncController.releaseGrace = const Duration(minutes: 10));
+
+  test('a first load that failed tries again when the book reopens', () async {
+    var requests = 0;
+    final failing = BookOrbitApiService(
+      baseUrl: 'https://bookorbit.test',
+      token: 't',
+      httpClient: MockClient((_) async {
+        requests++;
+        return http.Response('{"message":"no"}', 404);
+      }),
+    );
+    final c = PositionSyncController.acquire(failing, 987654);
+    await c.loadInitial();
+    expect(c.info, isNull);
+    PositionSyncController.release(c);
+    final before = requests;
+    final again = PositionSyncController.acquire(failing, 987654);
+    await wait(const Duration(milliseconds: 20));
+    expect(requests, greaterThan(before));
+    PositionSyncController.release(again);
+    await wait(grace * 2);
+  });
 
   test('a released controller is parked, kept for the grace period, then disposed', () async {
     final c = PositionSyncController.acquire(api(), 41);

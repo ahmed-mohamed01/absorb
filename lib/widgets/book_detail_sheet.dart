@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'overlay_toast.dart';
@@ -18,8 +19,8 @@ import '../services/bookorbit_email.dart';
 import '../services/bookorbit_mapper.dart';
 import 'absorb_placement.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:palette_generator/palette_generator.dart';
-import '../utils/cover_accent.dart';
+import '../services/fork/book_stats_ready.dart';
+import '../services/fork/cover_accent_off_thread.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
@@ -89,11 +90,12 @@ void showBookDetailSheet(
   String? sourceCollectionId,
   String? sourceCollectionName,
 }) {
-  showStackableSheet(
-    context: context,
+  void open(BuildContext from) => showStackableSheet(
+    context: from,
     useSafeArea: true,
     initialChildSize: 0.85,
     maxChildSize: 0.95,
+    animationStyle: PlayerSettings.einkMode ? null : _forkBookSheetMotion,
     builder: (ctx, sc) => _BookDetailSheetContent(
       itemId: itemId,
       scrollController: sc,
@@ -102,6 +104,7 @@ void showBookDetailSheet(
       sourceCollectionName: sourceCollectionName,
     ),
   );
+  _forkOpenWhenReady(context, itemId, open);
 }
 
 /// Long-press shortcut: a compact sheet with Absorb + Download up top and the
@@ -259,7 +262,10 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     if (colorSourceNotifier.value == 'manual' && useColorEverywhereNotifier.value) {
       return manualColorScheme(manualSeedNotifier.value, Theme.of(context).brightness);
     }
-    return _rawCoverScheme;
+    // The skeleton stays neutral: the colour lands with the page.
+    if (_forkHoldingBack) return null;
+    // A colour worked out before the sheet opened is there from its first frame.
+    return _rawCoverScheme ??= _forkCachedCoverScheme();
   }
 
   // An Audiobookshelf ebook-only book whose EPUB reads itself aloud: the
@@ -653,6 +659,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     }
     _coverSchemeUrl = url;
     final brightness = Theme.of(context).brightness;
+    if (_forkApplyKnownAccent(url)) return;
     final ImageProvider provider;
     if (url.startsWith('/')) {
       provider = FileImage(File(url));
@@ -662,18 +669,15 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     }
     final t0 = DateTime.now();
     debugPrint('[BookDetail] _deriveCoverScheme start url=$url');
-    // Palette quantization runs on the UI thread; on a full-size cover it
-    // stalls the sheet's opening slide when the item is already cached.
-    // A thumbnail gives the same accent.
-    PaletteGenerator.fromImageProvider(ResizeImage(provider, width: 120), maximumColorCount: 16)
-        .then((palette) {
-      debugPrint('[BookDetail] PaletteGenerator ok in ${DateTime.now().difference(t0).inMilliseconds}ms');
-      final seedColor = accentFromCoverPalette(palette);
+    // Off the UI thread, so it can't stall the sheet's opening slide.
+    coverAccentOffThread(provider).then((seedColor) {
+      debugPrint('[BookDetail] cover accent ok in ${DateTime.now().difference(t0).inMilliseconds}ms');
+      if (seedColor != null) _forkCoverAccents[url] = seedColor;
       if (seedColor == null || !mounted) return;
       setState(() => _rawCoverScheme = ColorScheme.fromSeed(
         seedColor: seedColor, brightness: brightness));
     }).catchError((e) {
-      debugPrint('[BookDetail] PaletteGenerator error after ${DateTime.now().difference(t0).inMilliseconds}ms: $e');
+      debugPrint('[BookDetail] cover accent error after ${DateTime.now().difference(t0).inMilliseconds}ms: $e');
       if (!mounted) return;
       setState(() {
         _coverSchemeUrl = null;
@@ -732,7 +736,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
         // spinner. Accent colors fall back to the default scheme until the
         // palette resolves. Loading/failed states are wrapped in a scrollable
         // so drag-to-dismiss works even before content arrives.
-        _isLoading
+        _isLoading || _forkHoldingBack
             ? SingleChildScrollView(
                 controller: widget.scrollController,
                 physics: const AlwaysScrollableScrollPhysics(),
